@@ -310,7 +310,10 @@ void Minecraft::setViewAspect(float aspect) {
 }
 
 bool Minecraft::destroyBlockAt(int x, int y, int z) {
-  if (!gameMode_) {
+  if (!gameMode_ || !level_) {
+    return false;
+  }
+  if (level_->getTile(x, y, z) == static_cast<int>(TileId::Air)) {
     return false;
   }
   return gameMode_->destroyBlockAt(x, y, z);

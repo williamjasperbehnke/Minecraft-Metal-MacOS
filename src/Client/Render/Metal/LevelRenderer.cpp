@@ -17,6 +17,7 @@ namespace {
 constexpr int kTexCactusTop = 69;      // (5,4) in the 16x16 terrain atlas
 constexpr int kTexCactusSide = 70;     // (6,4)
 constexpr int kTexCactusBottom = 71;   // (7,4)
+constexpr float kParticleTickSeconds = 1.0f / 60.0f;
 
 int floorDiv16(int v) {
   return v >= 0 ? v / 16 : (v - 15) / 16;
@@ -24,6 +25,23 @@ int floorDiv16(int v) {
 
 bool isOverlayRenderableTile(int tile) {
   return tile > static_cast<int>(TileId::Air) && tile != static_cast<int>(TileId::Water);
+}
+
+bool usesBiomeTintForBreakingParticles(int tile) {
+  return tile == static_cast<int>(TileId::Grass) || tile == static_cast<int>(TileId::Leaves) ||
+         tile == static_cast<int>(TileId::SpruceLeaves) || tile == static_cast<int>(TileId::BirchLeaves) ||
+         tile == static_cast<int>(TileId::TallGrass) || tile == static_cast<int>(TileId::Fern);
+}
+
+simd_float3 breakParticleTintForFace(int tile, int x, int z, int faceOrdinal) {
+  if (tile == static_cast<int>(TileId::Grass)) {
+    // Match Minecraft/PS3 behavior: only grass top gets biome tint.
+    return (faceOrdinal == 0) ? detail::biomeTintForBlock(tile, x, z, true) : simd_float3{1.0f, 1.0f, 1.0f};
+  }
+  if (usesBiomeTintForBreakingParticles(tile)) {
+    return detail::biomeTintForBlock(tile, x, z, true);
+  }
+  return {1.0f, 1.0f, 1.0f};
 }
 
 bool isCactusRenderTile(int tile) {
@@ -133,6 +151,7 @@ void LevelRenderer::setLevel(Level* level) {
   }
   chunkMeshes_.clear();
   chunkTransparentMeshes_.clear();
+  breakParticles_.clear();
   visibleChunks_.clear();
   dirtyChunks_.clear();
   urgentDirtyChunks_.clear();
@@ -203,6 +222,8 @@ void LevelRenderer::setViewProj(const simd_float4x4& viewProj) {
 }
 
 void LevelRenderer::tick() {
+  const bool particlesChanged = tickBreakParticles();
+
   if (rebuildPending_) {
     rebuildPending_ = false;
     bool visibleChanged = false;
@@ -352,6 +373,10 @@ void LevelRenderer::tick() {
   if (transparentSortPending_) {
     uploadSortedTransparentMesh();
   }
+
+  if (particlesChanged) {
+    uploadOverlayVertices();
+  }
 }
 
 void LevelRenderer::rebuildTerrain() {
@@ -414,6 +439,7 @@ void LevelRenderer::allChanged() {
   chunkTransparentMeshes_.clear();
   dirtyChunks_.clear();
   urgentDirtyChunks_.clear();
+  breakParticles_.clear();
   metalRenderer_->clearChunkMeshes();
   metalRenderer_->setChunkDrawList({});
   visibleSetDirty_ = true;
@@ -987,6 +1013,62 @@ void LevelRenderer::clearSelectionBlock() {
   uploadOverlayVertices();
 }
 
+BreakingParticles::SpawnContext LevelRenderer::makeBreakParticleSpawnContext(int x, int y, int z, int tile) const {
+  BreakingParticles::SpawnContext ctx;
+  ctx.x = x;
+  ctx.y = y;
+  ctx.z = z;
+  ctx.tile = tile;
+  const std::array<Face, 6> faces = {Face::Top, Face::Bottom, Face::North, Face::South, Face::West, Face::East};
+  for (std::size_t i = 0; i < faces.size(); ++i) {
+    ctx.faceTextures[i] = textureForTileFace(tile, faces[i]);
+    ctx.faceTints[i] = breakParticleTintForFace(tile, x, z, static_cast<int>(faces[i]));
+  }
+  return ctx;
+}
+
+void LevelRenderer::spawnBreakParticles(int x, int y, int z, int tile) {
+  if (!isOverlayRenderableTile(tile) || tile == static_cast<int>(TileId::Bedrock)) {
+    return;
+  }
+  const BreakingParticles::SpawnContext ctx = makeBreakParticleSpawnContext(x, y, z, tile);
+  breakParticles_.spawnBreakBurst(ctx);
+  uploadOverlayVertices();
+}
+
+void LevelRenderer::spawnMiningParticles(int x, int y, int z, int prevX, int prevY, int prevZ, int tile) {
+  if (!isOverlayRenderableTile(tile) || tile == static_cast<int>(TileId::Bedrock)) {
+    return;
+  }
+  const BreakingParticles::SpawnContext ctx = makeBreakParticleSpawnContext(x, y, z, tile);
+
+  bool spawnedAny = false;
+  auto tryFace = [&](int nx, int ny, int nz) {
+    if (!level_) {
+      return;
+    }
+    const int neighborTile = level_->getTile(nx, ny, nz);
+    if (!isSolidTileId(neighborTile)) {
+      breakParticles_.spawnMiningChip(ctx, nx, ny, nz);
+      spawnedAny = true;
+    }
+  };
+
+  // Emit chips from every exposed face, matching classic debris behavior.
+  tryFace(x + 1, y, z);
+  tryFace(x - 1, y, z);
+  tryFace(x, y + 1, z);
+  tryFace(x, y - 1, z);
+  tryFace(x, y, z + 1);
+  tryFace(x, y, z - 1);
+
+  // Fallback for fully enclosed blocks.
+  if (!spawnedAny) {
+    breakParticles_.spawnMiningChip(ctx, prevX, prevY, prevZ);
+  }
+  uploadOverlayVertices();
+}
+
 void LevelRenderer::appendSelectionOverlay() {
   if (!selectionActive_ || !level_) {
     return;
@@ -1020,10 +1102,19 @@ void LevelRenderer::appendDestroyOverlay() {
   appendOverlayCube(destroyX_, destroyY_, destroyZ_, destroyTexture, eps);
 }
 
+void LevelRenderer::appendBreakParticlesOverlay() {
+  breakParticles_.appendVertices(overlayVertices_, {cameraX_, cameraY_, cameraZ_});
+}
+
+bool LevelRenderer::tickBreakParticles() {
+  return breakParticles_.tick(kParticleTickSeconds);
+}
+
 void LevelRenderer::uploadOverlayVertices() {
   overlayVertices_.clear();
   appendSelectionOverlay();
   appendDestroyOverlay();
+  appendBreakParticlesOverlay();
   metalRenderer_->setTerrainOverlayVertices(overlayVertices_);
 }
 

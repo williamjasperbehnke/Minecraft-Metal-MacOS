@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "Client/Render/Metal/MetalRenderer.h"
+#include "Client/Render/Particles/BreakingParticles.h"
 #include "World/Level/LevelListener.h"
 
 namespace mc {
@@ -29,6 +30,8 @@ public:
   void clearDestroyProgress();
   void setSelectionBlock(int x, int y, int z);
   void clearSelectionBlock();
+  void spawnMiningParticles(int x, int y, int z, int prevX, int prevY, int prevZ, int tile);
+  void spawnBreakParticles(int x, int y, int z, int tile);
 
   void tileChanged(int x, int y, int z) override;
   void setTilesDirty(int x0, int y0, int z0, int x1, int y1, int z1, Level* level) override;
@@ -56,8 +59,11 @@ private:
   static std::int64_t chunkKey(int chunkX, int chunkZ);
   void appendDestroyOverlay();
   void appendSelectionOverlay();
+  void appendBreakParticlesOverlay();
+  BreakingParticles::SpawnContext makeBreakParticleSpawnContext(int x, int y, int z, int tile) const;
   void appendOverlayCube(int x, int y, int z, int textureIndex, float inflate);
   void uploadOverlayVertices();
+  bool tickBreakParticles();
   bool chunkVisibleInFrustum(int chunkX, int chunkZ) const;
 
   MetalRenderer* metalRenderer_;
@@ -93,6 +99,7 @@ private:
   int selectionX_ = 0;
   int selectionY_ = 0;
   int selectionZ_ = 0;
+  BreakingParticles breakParticles_;
 };
 
 }  // namespace mc

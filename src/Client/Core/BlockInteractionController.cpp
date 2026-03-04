@@ -7,6 +7,26 @@
 
 namespace mc {
 
+namespace {
+
+bool isInstantBreakPlantTile(int tile) {
+  switch (static_cast<TileId>(tile)) {
+    case TileId::TallGrass:
+    case TileId::Fern:
+    case TileId::DeadBush:
+    case TileId::FlowerYellow:
+    case TileId::FlowerRed:
+    case TileId::MushroomBrown:
+    case TileId::MushroomRed:
+    case TileId::SugarCane:
+      return true;
+    default:
+      return false;
+  }
+}
+
+}  // namespace
+
 void BlockInteractionController::setBreakHeld(bool held, LevelRenderer* levelRenderer) {
   breakHeld_ = held;
   if (!breakHeld_) {
@@ -52,6 +72,18 @@ void BlockInteractionController::tickBreaking(double dtSeconds, GameModeType mod
                                               const std::function<bool(int, int, int)>& destroyBlockAt,
                                               const std::function<std::optional<Hit>()>& reacquireHit,
                                               LevelRenderer* levelRenderer) {
+  auto tryInstantDestroy = [&](int x, int y, int z, int tile) {
+    if (!destroyBlockAt(x, y, z)) {
+      return false;
+    }
+    if (levelRenderer) {
+      levelRenderer->spawnBreakParticles(x, y, z, tile);
+    }
+    breakCooldownSeconds_ = kBreakDelaySeconds;
+    clearDestroyState(levelRenderer);
+    return true;
+  };
+
   if (mode == GameModeType::Spectator || !breakHeld_) {
     clearDestroyState(levelRenderer);
     return;
@@ -74,12 +106,15 @@ void BlockInteractionController::tickBreaking(double dtSeconds, GameModeType mod
     return;
   }
 
+  if (isInstantBreakPlantTile(hitTile)) {
+    // Plants break immediately and never show the crack overlay.
+    tryInstantDestroy(hit->x, hit->y, hit->z, hitTile);
+    return;
+  }
+
   if (mode == GameModeType::Creative) {
     // Creative breaks blocks instantly with no crack animation.
-    if (destroyBlockAt(hit->x, hit->y, hit->z)) {
-      breakCooldownSeconds_ = kBreakDelaySeconds;
-    }
-    clearDestroyState(levelRenderer);
+    tryInstantDestroy(hit->x, hit->y, hit->z, hitTile);
     return;
   }
 
@@ -92,8 +127,17 @@ void BlockInteractionController::tickBreaking(double dtSeconds, GameModeType mod
     // is visible immediately for continuous hold-mining.
     destroyProgress_ = 0.1f;
     destroyStage_ = 0;
+    miningParticleCooldownSeconds_ = 0.0f;
     if (levelRenderer) {
       levelRenderer->setDestroyProgress(destroyX_, destroyY_, destroyZ_, destroyStage_);
+    }
+  }
+
+  if (levelRenderer) {
+    miningParticleCooldownSeconds_ -= static_cast<float>(dtSeconds);
+    while (miningParticleCooldownSeconds_ <= 0.0f) {
+      levelRenderer->spawnMiningParticles(destroyX_, destroyY_, destroyZ_, hit->prevX, hit->prevY, hit->prevZ, hitTile);
+      miningParticleCooldownSeconds_ += kMiningParticleIntervalSeconds;
     }
   }
 
@@ -118,11 +162,15 @@ void BlockInteractionController::tickBreaking(double dtSeconds, GameModeType mod
     clearDestroyState(levelRenderer);
     return;
   }
+  if (levelRenderer) {
+    levelRenderer->spawnBreakParticles(destroyX_, destroyY_, destroyZ_, hitTile);
+  }
 
   breakCooldownSeconds_ = kBreakDelaySeconds;
   destroyActive_ = false;
   destroyProgress_ = 0.0f;
   destroyStage_ = -1;
+  miningParticleCooldownSeconds_ = 0.0f;
   if (levelRenderer) {
     levelRenderer->clearDestroyProgress();
   }
@@ -141,6 +189,7 @@ void BlockInteractionController::tickBreaking(double dtSeconds, GameModeType mod
   destroyZ_ = nextHit->z;
   destroyProgress_ = 0.1f;
   destroyStage_ = 0;
+  miningParticleCooldownSeconds_ = 0.0f;
   if (levelRenderer) {
     levelRenderer->setDestroyProgress(destroyX_, destroyY_, destroyZ_, destroyStage_);
   }
@@ -154,6 +203,7 @@ void BlockInteractionController::clearDestroyState(LevelRenderer* levelRenderer)
   destroyActive_ = false;
   destroyProgress_ = 0.0f;
   destroyStage_ = -1;
+  miningParticleCooldownSeconds_ = 0.0f;
   if (levelRenderer) {
     levelRenderer->clearDestroyProgress();
   }

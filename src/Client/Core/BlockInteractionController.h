@@ -44,6 +44,7 @@ private:
   int destroyZ_ = 0;
   float destroyProgress_ = 0.0f;
   int destroyStage_ = -1;
+  float miningParticleCooldownSeconds_ = 0.0f;
   float breakCooldownSeconds_ = 0.0f;
 
   bool lookTargetActive_ = false;
@@ -53,6 +54,7 @@ private:
 
   static constexpr float kDestroyRate = 1.75f;
   static constexpr float kBreakDelaySeconds = 4.0f / 20.0f;  // 4 game ticks
+  static constexpr float kMiningParticleIntervalSeconds = 1.0f / 30.0f;
 };
 
 }  // namespace mc
