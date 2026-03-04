@@ -14,12 +14,101 @@ namespace mc {
 
 namespace {
 
+constexpr int kTexCactusTop = 69;      // (5,4) in the 16x16 terrain atlas
+constexpr int kTexCactusSide = 70;     // (6,4)
+constexpr int kTexCactusBottom = 71;   // (7,4)
+
 int floorDiv16(int v) {
   return v >= 0 ? v / 16 : (v - 15) / 16;
 }
 
 bool isOverlayRenderableTile(int tile) {
   return tile > static_cast<int>(TileId::Air) && tile != static_cast<int>(TileId::Water);
+}
+
+bool isCactusRenderTile(int tile) {
+  return tile == static_cast<int>(TileId::Cactus);
+}
+
+bool isWaterRenderTile(int tile) {
+  return tile == static_cast<int>(TileId::Water);
+}
+
+simd_float3 applyCactusCutoutTint(int tile, simd_float3 color) {
+  if (isCactusRenderTile(tile)) {
+    // Negative red channel marks cutout geometry in the fragment shader.
+    color.x = -std::abs(color.x);
+  }
+  return color;
+}
+
+float cactusSideInsetForFace(int tile, int faceOrdinal) {
+  if (!isCactusRenderTile(tile)) {
+    return 0.0f;
+  }
+  // LevelRenderer::Face ordinal order: Top(0), Bottom(1), North(2), South(3), West(4), East(5).
+  if (faceOrdinal >= 2 && faceOrdinal <= 5) {
+    return 1.0f / 16.0f;
+  }
+  return 0.0f;
+}
+
+float faceTopYForTile(int tile, float y, float inflate, bool waterHasSameAbove) {
+  if (isWaterRenderTile(tile)) {
+    if (waterHasSameAbove) {
+      return y + 1.0f + inflate;
+    }
+    return y + (14.0f / 16.0f) + inflate;
+  }
+  return y + 1.0f + inflate;
+}
+
+struct FaceBounds {
+  float x0 = 0.0f;
+  float x1 = 1.0f;
+  float z0 = 0.0f;
+  float z1 = 1.0f;
+  float minY = 0.0f;
+  float maxY = 1.0f;
+  float topX0 = 0.0f;
+  float topX1 = 1.0f;
+  float topZ0 = 0.0f;
+  float topZ1 = 1.0f;
+  float sideX0 = 0.0f;
+  float sideX1 = 1.0f;
+  float sideZ0 = 0.0f;
+  float sideZ1 = 1.0f;
+  float northZ = 0.0f;
+  float southZ = 1.0f;
+  float westX = 0.0f;
+  float eastX = 1.0f;
+};
+
+FaceBounds computeFaceBounds(int tile, int faceOrdinal, float x, float y, float z, float inflate, bool waterHasSameAbove) {
+  const bool isCactus = isCactusRenderTile(tile);
+  const float cactusSideInset = cactusSideInsetForFace(tile, faceOrdinal);
+  const float cactusCornerTrim = isCactus ? 0.016 : 0.0f;
+
+  FaceBounds bounds;
+  bounds.x0 = x - inflate;
+  bounds.x1 = x + 1.0f + inflate;
+  bounds.minY = y - inflate;
+  bounds.maxY = faceTopYForTile(tile, y, inflate, waterHasSameAbove);
+  bounds.z0 = z - inflate;
+  bounds.z1 = z + 1.0f + inflate;
+  bounds.sideX0 = bounds.x0 + cactusCornerTrim;
+  bounds.sideX1 = bounds.x1 - cactusCornerTrim;
+  bounds.sideZ0 = bounds.z0 + cactusCornerTrim;
+  bounds.sideZ1 = bounds.z1 - cactusCornerTrim;
+  bounds.topX0 = isCactus ? bounds.sideX0 : bounds.x0;
+  bounds.topX1 = isCactus ? bounds.sideX1 : bounds.x1;
+  bounds.topZ0 = isCactus ? bounds.sideZ0 : bounds.z0;
+  bounds.topZ1 = isCactus ? bounds.sideZ1 : bounds.z1;
+  bounds.northZ = bounds.z0 + cactusSideInset;
+  bounds.southZ = bounds.z1 - cactusSideInset;
+  bounds.westX = bounds.x0 + cactusSideInset;
+  bounds.eastX = bounds.x1 - cactusSideInset;
+  return bounds;
 }
 
 }  // namespace
@@ -333,10 +422,13 @@ void LevelRenderer::allChanged() {
 
 int LevelRenderer::textureForTileFace(int tile, Face face) const {
   if (tile == static_cast<int>(TileId::Cactus)) {
-    if (face == Face::Top || face == Face::Bottom) {
-      return 69;
+    if (face == Face::Top) {
+      return kTexCactusTop;
     }
-    return 70;
+    if (face == Face::Bottom) {
+      return kTexCactusBottom;
+    }
+    return kTexCactusSide;
   }
   if (tile == static_cast<int>(TileId::Ice)) {
     return 67;
@@ -504,7 +596,12 @@ void LevelRenderer::buildChunkMesh(int chunkX, int chunkZ, std::vector<TerrainVe
   };
   auto emitTransparentFace = [&](std::vector<TerrainVertex>& out, int worldX, int y, int worldZ, FaceDir face, int textureIndex, float shade,
                                  int tile) {
-    appendFace(out, static_cast<float>(worldX), static_cast<float>(y), static_cast<float>(worldZ), mapFace(face), textureIndex, shade, tile);
+    const int lx = worldX - view.x0;
+    const int lz = worldZ - view.z0;
+    const bool waterHasSameAbove =
+        (tile == static_cast<int>(TileId::Water)) && (view.tileAt(lx, y + 1, lz) == static_cast<int>(TileId::Water));
+    appendFace(out, static_cast<float>(worldX), static_cast<float>(y), static_cast<float>(worldZ), mapFace(face), textureIndex, shade, tile,
+               0.0f, true, waterHasSameAbove);
   };
   auto emitOpaqueRect = [&](std::vector<TerrainVertex>& out, FaceDir face, int tile, int tex, float shade, int worldX, int y, int worldZ,
                             int w, int h) {
@@ -575,8 +672,46 @@ void LevelRenderer::buildChunkMesh(int chunkX, int chunkZ, std::vector<TerrainVe
     out.push_back(v2);
     out.push_back(v3);
   };
+  auto emitCactusFaces = [&](int lx, int y, int lz, int worldX, int worldZ, int tile) {
+    struct FaceRule {
+      Face renderFace;
+      FaceDir texFace;
+      int neighborTile;
+      float shade;
+      bool skip = false;
+    };
+    const std::array<FaceRule, 6> rules = {{
+        {Face::Top, FaceDir::Top, view.tileAt(lx, y + 1, lz), 1.0f, false},
+        {Face::Bottom, FaceDir::Bottom, view.tileAt(lx, y - 1, lz), 0.55f,
+         (tile == static_cast<int>(TileId::Bedrock) && y == Level::minBuildHeight)},
+        {Face::North, FaceDir::North, view.tileAt(lx, y, lz - 1), 0.78f, false},
+        {Face::South, FaceDir::South, view.tileAt(lx, y, lz + 1), 0.72f, false},
+        {Face::West, FaceDir::West, view.tileAt(lx - 1, y, lz), 0.84f, false},
+        {Face::East, FaceDir::East, view.tileAt(lx + 1, y, lz), 0.88f, false},
+    }};
+    for (const FaceRule& rule : rules) {
+      if (rule.skip || !detail::shouldRenderFaceForTile(tile, rule.neighborTile)) {
+        continue;
+      }
+      appendFace(opaqueOut, static_cast<float>(worldX), static_cast<float>(y), static_cast<float>(worldZ), rule.renderFace,
+                 textureForFace(tile, rule.texFace), rule.shade, tile);
+    }
+  };
 
   FloraMesher{}.build(view, opaqueOut, textureForFace);
+  for (int lx = 0; lx < 16; ++lx) {
+    for (int lz = 0; lz < 16; ++lz) {
+      const int worldX = view.x0 + lx;
+      const int worldZ = view.z0 + lz;
+      for (int y = Level::minBuildHeight; y < Level::maxBuildHeight; ++y) {
+        const int tile = view.center->getTile(lx, y, lz);
+        if (tile != static_cast<int>(TileId::Cactus)) {
+          continue;
+        }
+        emitCactusFaces(lx, y, lz, worldX, worldZ, tile);
+      }
+    }
+  }
   TransparentMesher{}.build(view, transparentOut, textureForFace, emitTransparentFace);
   OpaqueGreedyMesher{}.build(view, opaqueOut, textureForFace, emitOpaqueRect);
 }
@@ -697,10 +832,12 @@ void LevelRenderer::appendOverlayCube(int x, int y, int z, int textureIndex, flo
 }
 
 void LevelRenderer::appendFace(std::vector<TerrainVertex>& out, float x, float y, float z, Face face, int textureIndex, float shade,
-                               int tile, float inflate, bool stabilizeUvEdges) {
+                               int tile, float inflate, bool stabilizeUvEdges, bool waterHasSameAbove) {
   const bool allowGrassTint = (face == Face::Top);
   const simd_float3 tint = detail::biomeTintForBlock(tile, static_cast<int>(x), static_cast<int>(z), allowGrassTint);
-  const simd_float3 color = {tint.x * shade, tint.y * shade, tint.z * shade};
+  const simd_float3 baseColor = {tint.x * shade, tint.y * shade, tint.z * shade};
+  const simd_float3 color = applyCactusCutoutTint(tile, baseColor);
+  const FaceBounds bounds = computeFaceBounds(tile, static_cast<int>(face), x, y, z, inflate, waterHasSameAbove);
 
   TerrainVertex v0{};
   TerrainVertex v1{};
@@ -709,40 +846,40 @@ void LevelRenderer::appendFace(std::vector<TerrainVertex>& out, float x, float y
 
   switch (face) {
     case Face::Top:
-      v0.position = {x - inflate, y + 1.0f + inflate, z - inflate};
-      v1.position = {x + 1.0f + inflate, y + 1.0f + inflate, z - inflate};
-      v2.position = {x + 1.0f + inflate, y + 1.0f + inflate, z + 1.0f + inflate};
-      v3.position = {x - inflate, y + 1.0f + inflate, z + 1.0f + inflate};
+      v0.position = {bounds.topX0, bounds.maxY, bounds.topZ0};
+      v1.position = {bounds.topX1, bounds.maxY, bounds.topZ0};
+      v2.position = {bounds.topX1, bounds.maxY, bounds.topZ1};
+      v3.position = {bounds.topX0, bounds.maxY, bounds.topZ1};
       break;
     case Face::Bottom:
-      v0.position = {x - inflate, y - inflate, z + 1.0f + inflate};
-      v1.position = {x + 1.0f + inflate, y - inflate, z + 1.0f + inflate};
-      v2.position = {x + 1.0f + inflate, y - inflate, z - inflate};
-      v3.position = {x - inflate, y - inflate, z - inflate};
+      v0.position = {bounds.topX0, bounds.minY, bounds.topZ1};
+      v1.position = {bounds.topX1, bounds.minY, bounds.topZ1};
+      v2.position = {bounds.topX1, bounds.minY, bounds.topZ0};
+      v3.position = {bounds.topX0, bounds.minY, bounds.topZ0};
       break;
     case Face::North:
-      v0.position = {x + 1.0f + inflate, y - inflate, z - inflate};
-      v1.position = {x + 1.0f + inflate, y + 1.0f + inflate, z - inflate};
-      v2.position = {x - inflate, y + 1.0f + inflate, z - inflate};
-      v3.position = {x - inflate, y - inflate, z - inflate};
+      v0.position = {bounds.sideX1, bounds.minY, bounds.northZ};
+      v1.position = {bounds.sideX1, bounds.maxY, bounds.northZ};
+      v2.position = {bounds.sideX0, bounds.maxY, bounds.northZ};
+      v3.position = {bounds.sideX0, bounds.minY, bounds.northZ};
       break;
     case Face::South:
-      v0.position = {x - inflate, y - inflate, z + 1.0f + inflate};
-      v1.position = {x - inflate, y + 1.0f + inflate, z + 1.0f + inflate};
-      v2.position = {x + 1.0f + inflate, y + 1.0f + inflate, z + 1.0f + inflate};
-      v3.position = {x + 1.0f + inflate, y - inflate, z + 1.0f + inflate};
+      v0.position = {bounds.sideX0, bounds.minY, bounds.southZ};
+      v1.position = {bounds.sideX0, bounds.maxY, bounds.southZ};
+      v2.position = {bounds.sideX1, bounds.maxY, bounds.southZ};
+      v3.position = {bounds.sideX1, bounds.minY, bounds.southZ};
       break;
     case Face::West:
-      v0.position = {x - inflate, y - inflate, z - inflate};
-      v1.position = {x - inflate, y + 1.0f + inflate, z - inflate};
-      v2.position = {x - inflate, y + 1.0f + inflate, z + 1.0f + inflate};
-      v3.position = {x - inflate, y - inflate, z + 1.0f + inflate};
+      v0.position = {bounds.westX, bounds.minY, bounds.sideZ0};
+      v1.position = {bounds.westX, bounds.maxY, bounds.sideZ0};
+      v2.position = {bounds.westX, bounds.maxY, bounds.sideZ1};
+      v3.position = {bounds.westX, bounds.minY, bounds.sideZ1};
       break;
     case Face::East:
-      v0.position = {x + 1.0f + inflate, y - inflate, z + 1.0f + inflate};
-      v1.position = {x + 1.0f + inflate, y + 1.0f + inflate, z + 1.0f + inflate};
-      v2.position = {x + 1.0f + inflate, y + 1.0f + inflate, z - inflate};
-      v3.position = {x + 1.0f + inflate, y - inflate, z - inflate};
+      v0.position = {bounds.eastX, bounds.minY, bounds.sideZ1};
+      v1.position = {bounds.eastX, bounds.maxY, bounds.sideZ1};
+      v2.position = {bounds.eastX, bounds.maxY, bounds.sideZ0};
+      v3.position = {bounds.eastX, bounds.minY, bounds.sideZ0};
       break;
   }
 

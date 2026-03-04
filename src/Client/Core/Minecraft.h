@@ -43,6 +43,9 @@ public:
   int renderDistanceChunks() const { return kRenderDistanceChunks; }
   bool lookTargetBlock(int* x, int* y, int* z) const;
   simd_float3 cameraWorldPosition() const;
+  float lookYawDegrees() const;
+  float lookPitchDegrees() const;
+  bool isCameraUnderwater() const;
 
   Level* level() const { return level_.get(); }
 

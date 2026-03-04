@@ -45,7 +45,7 @@ private:
   };
 
   void appendFace(std::vector<TerrainVertex>& out, float x, float y, float z, Face face, int textureIndex, float shade, int tile,
-                  float inflate = 0.0f, bool stabilizeUvEdges = false);
+                  float inflate = 0.0f, bool stabilizeUvEdges = false, bool waterHasSameAbove = false);
   int textureForTileFace(int tile, Face face) const;
   void buildChunkMesh(int chunkX, int chunkZ, std::vector<TerrainVertex>& opaqueOut, std::vector<TerrainVertex>& transparentOut);
   void composeTerrainMesh();

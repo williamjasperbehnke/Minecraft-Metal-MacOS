@@ -48,6 +48,13 @@ set(CMAKE_OBJCXX_STANDARD_REQUIRED ON)
 set(SRC
   src/Client/App/main.mm
   src/Client/App/AppDelegate.mm
+  src/Client/App/AppInputState.mm
+  src/Client/App/AppWorldRenderer.mm
+  src/Client/App/CrosshairView.mm
+  src/Client/App/DebugHudController.mm
+  src/Client/App/DebugHudFormatter.cpp
+  src/Client/App/MetalRendererBridge.mm
+  src/Client/App/TerrainRenderResources.mm
   src/Client/Core/BlockInteractionController.cpp
   src/Client/Core/Minecraft.cpp
   src/Client/Core/PlayerController.cpp

@@ -246,6 +246,7 @@ BiomeColumnStats computeBiomeStats(const std::vector<BiomeSample>& biomes) {
     switch (b.kind) {
       case BiomeKind::Forest: ++out.forest; break;
       case BiomeKind::Taiga: ++out.taiga; break;
+      case BiomeKind::River: ++out.plains; break;
       case BiomeKind::Plains: ++out.plains; break;
       case BiomeKind::Mountains: ++out.mountains; break;
       case BiomeKind::Desert: ++out.desert; break;

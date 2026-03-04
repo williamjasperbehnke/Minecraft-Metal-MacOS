@@ -12,6 +12,8 @@ namespace mc::detail {
 
 constexpr float kAtlasCols = 16.0f;
 constexpr float kAtlasRows = 16.0f;
+constexpr int kChunkSide = 16;
+constexpr int kChunkArea = kChunkSide * kChunkSide;
 constexpr int kTileUnknown = -1;
 
 enum class FaceDir : int {
@@ -39,8 +41,16 @@ inline bool isPlantTile(int tile) {
          tile == static_cast<int>(TileId::MushroomRed) || tile == static_cast<int>(TileId::SugarCane);
 }
 
+inline bool isCactusTile(int tile) {
+  return tile == static_cast<int>(TileId::Cactus);
+}
+
+inline bool isNonOccludingTileForFaceCulling(int tile) {
+  return isTransparentTile(tile) || isPlantTile(tile) || isCactusTile(tile);
+}
+
 inline bool shouldRenderFaceForTile(int tile, int neighborTile) {
-  const bool tileTransparent = isTransparentTile(tile);
+  const bool tileTransparent = isNonOccludingTileForFaceCulling(tile);
   if (neighborTile == kTileUnknown) {
     return !tileTransparent;
   }
@@ -48,7 +58,14 @@ inline bool shouldRenderFaceForTile(int tile, int neighborTile) {
     return true;
   }
 
-  const bool neighborTransparent = isTransparentTile(neighborTile);
+  // Water should behave like a connected volume and avoid emitting
+  // internal faces against non-occluding neighbors (flora/cactus/glass/etc.),
+  // which can appear as interior seam lines.
+  if (tile == static_cast<int>(TileId::Water) && isNonOccludingTileForFaceCulling(neighborTile)) {
+    return false;
+  }
+
+  const bool neighborTransparent = isNonOccludingTileForFaceCulling(neighborTile);
   if (!tileTransparent) {
     return neighborTransparent;
   }
@@ -62,8 +79,8 @@ inline bool shouldRenderFaceForTile(int tile, int neighborTile) {
 }
 
 inline simd_float2 atlasTileOrigin(int textureIndex) {
-  const int tx = textureIndex % 16;
-  const int ty = textureIndex / 16;
+  const int tx = textureIndex % kChunkSide;
+  const int ty = textureIndex / kChunkSide;
   return {static_cast<float>(tx) / kAtlasCols, static_cast<float>(ty) / kAtlasRows};
 }
 
@@ -92,19 +109,19 @@ struct ChunkBuildView {
     if (y < Level::minBuildHeight || y >= Level::maxBuildHeight) {
       return static_cast<int>(TileId::Air);
     }
-    if (lx >= 0 && lx < 16 && lz >= 0 && lz < 16) {
+    if (lx >= 0 && lx < kChunkSide && lz >= 0 && lz < kChunkSide) {
       return center->getTile(lx, y, lz);
     }
-    if (lx < 0 && lz >= 0 && lz < 16) {
-      return west ? west->getTile(15, y, lz) : kTileUnknown;
+    if (lx < 0 && lz >= 0 && lz < kChunkSide) {
+      return west ? west->getTile(kChunkSide - 1, y, lz) : kTileUnknown;
     }
-    if (lx >= 16 && lz >= 0 && lz < 16) {
+    if (lx >= kChunkSide && lz >= 0 && lz < kChunkSide) {
       return east ? east->getTile(0, y, lz) : kTileUnknown;
     }
-    if (lz < 0 && lx >= 0 && lx < 16) {
-      return north ? north->getTile(lx, y, 15) : kTileUnknown;
+    if (lz < 0 && lx >= 0 && lx < kChunkSide) {
+      return north ? north->getTile(lx, y, kChunkSide - 1) : kTileUnknown;
     }
-    if (lz >= 16 && lx >= 0 && lx < 16) {
+    if (lz >= kChunkSide && lx >= 0 && lx < kChunkSide) {
       return south ? south->getTile(lx, y, 0) : kTileUnknown;
     }
     return static_cast<int>(TileId::Air);
@@ -115,8 +132,8 @@ class FloraMesher {
 public:
   template <typename TextureLookupFn>
   void build(const ChunkBuildView& view, std::vector<TerrainVertex>& opaqueOut, TextureLookupFn&& textureForFace) const {
-    for (int lx = 0; lx < 16; ++lx) {
-      for (int lz = 0; lz < 16; ++lz) {
+    for (int lx = 0; lx < kChunkSide; ++lx) {
+      for (int lz = 0; lz < kChunkSide; ++lz) {
         const int worldX = view.x0 + lx;
         const int worldZ = view.z0 + lz;
         for (int y = Level::minBuildHeight; y < Level::maxBuildHeight; ++y) {
@@ -169,6 +186,13 @@ private:
       out.push_back(v0);
       out.push_back(v2);
       out.push_back(v3);
+      // Flora quads must be visible from both sides while terrain culling is enabled.
+      out.push_back(v0);
+      out.push_back(v2);
+      out.push_back(v1);
+      out.push_back(v0);
+      out.push_back(v3);
+      out.push_back(v2);
     };
 
     constexpr float inset = 0.08f;
@@ -184,8 +208,8 @@ public:
   template <typename TextureLookupFn, typename EmitFaceFn>
   void build(const ChunkBuildView& view, std::vector<TerrainVertex>& transparentOut, TextureLookupFn&& textureForFace,
              EmitFaceFn&& emitFace) const {
-    for (int lx = 0; lx < 16; ++lx) {
-      for (int lz = 0; lz < 16; ++lz) {
+    for (int lx = 0; lx < kChunkSide; ++lx) {
+      for (int lz = 0; lz < kChunkSide; ++lz) {
         const int worldX = view.x0 + lx;
         const int worldZ = view.z0 + lz;
         for (int y = Level::minBuildHeight; y < Level::maxBuildHeight; ++y) {
@@ -227,35 +251,35 @@ public:
 
   template <typename TextureLookupFn, typename EmitRectFn>
   void build(const ChunkBuildView& view, std::vector<TerrainVertex>& opaqueOut, TextureLookupFn&& textureForFace, EmitRectFn&& emitRect) const {
-    std::vector<MaskCell> mask(16 * 16);
+    std::vector<MaskCell> mask(kChunkArea);
 
     for (int y = Level::minBuildHeight; y < Level::maxBuildHeight; ++y) {
-      for (int lz = 0; lz < 16; ++lz) {
-        for (int lx = 0; lx < 16; ++lx) {
+      for (int lz = 0; lz < kChunkSide; ++lz) {
+        for (int lx = 0; lx < kChunkSide; ++lx) {
           const int tile = view.center->getTile(lx, y, lz);
           const int n = view.tileAt(lx, y + 1, lz);
-          mask[lx + lz * 16] =
+          mask[lx + lz * kChunkSide] =
               (isOpaqueTile(tile) && shouldRenderFaceForTile(tile, n)) ? MaskCell{tile, textureForFace(tile, FaceDir::Top)} : MaskCell{};
         }
       }
-      greedyEmit(mask, 16, 16, [&](int i, int j, int w, int h, int tile, int tex) {
+      greedyEmit(mask, kChunkSide, kChunkSide, [&](int i, int j, int w, int h, int tile, int tex) {
         emitRect(opaqueOut, FaceDir::Top, tile, tex, 1.0f, view.x0 + i, y, view.z0 + j, w, h);
       });
     }
 
     for (int y = Level::minBuildHeight; y < Level::maxBuildHeight; ++y) {
-      for (int lz = 0; lz < 16; ++lz) {
-        for (int lx = 0; lx < 16; ++lx) {
+      for (int lz = 0; lz < kChunkSide; ++lz) {
+        for (int lx = 0; lx < kChunkSide; ++lx) {
           const int tile = view.center->getTile(lx, y, lz);
           const int n = view.tileAt(lx, y - 1, lz);
-          mask[lx + lz * 16] =
+          mask[lx + lz * kChunkSide] =
               (isOpaqueTile(tile) && !(tile == static_cast<int>(TileId::Bedrock) && y == Level::minBuildHeight) &&
                shouldRenderFaceForTile(tile, n))
                   ? MaskCell{tile, textureForFace(tile, FaceDir::Bottom)}
                   : MaskCell{};
         }
       }
-      greedyEmit(mask, 16, 16, [&](int i, int j, int w, int h, int tile, int tex) {
+      greedyEmit(mask, kChunkSide, kChunkSide, [&](int i, int j, int w, int h, int tile, int tex) {
         emitRect(opaqueOut, FaceDir::Bottom, tile, tex, 0.55f, view.x0 + i, y, view.z0 + j, w, h);
       });
     }
@@ -321,7 +345,7 @@ public:
 
 private:
   static bool isOpaqueTile(int tile) {
-    return tile > static_cast<int>(TileId::Air) && !isTransparentTile(tile) && !isPlantTile(tile);
+    return tile > static_cast<int>(TileId::Air) && !isTransparentTile(tile) && !isPlantTile(tile) && !isCactusTile(tile);
   }
 
   static bool sameCell(const MaskCell& a, const MaskCell& b) {

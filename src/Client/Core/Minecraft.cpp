@@ -455,4 +455,25 @@ simd_float3 Minecraft::cameraWorldPosition() const {
   return cameraPosition();
 }
 
+float Minecraft::lookYawDegrees() const {
+  constexpr float kRadToDeg = 180.0f / 3.1415926535f;
+  return playerController_.yawRadians() * kRadToDeg;
+}
+
+float Minecraft::lookPitchDegrees() const {
+  constexpr float kRadToDeg = 180.0f / 3.1415926535f;
+  return playerController_.pitchRadians() * kRadToDeg;
+}
+
+bool Minecraft::isCameraUnderwater() const {
+  if (!level_ || !localPlayer_) {
+    return false;
+  }
+  const simd_float3 eye = cameraPosition();
+  const int tx = static_cast<int>(std::floor(eye.x));
+  const int ty = static_cast<int>(std::floor(eye.y));
+  const int tz = static_cast<int>(std::floor(eye.z));
+  return level_->getTile(tx, ty, tz) == static_cast<int>(TileId::Water);
+}
+
 }  // namespace mc

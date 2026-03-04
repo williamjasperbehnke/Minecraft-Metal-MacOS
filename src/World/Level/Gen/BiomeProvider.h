@@ -12,6 +12,7 @@ namespace mc::gen {
 
 enum class BiomeKind {
   Ocean,
+  River,
   Plains,
   Forest,
   Desert,
