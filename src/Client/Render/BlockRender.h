@@ -62,10 +62,6 @@ inline bool usesBiomeTint(int tile, bool allowGrassTint) {
   return tint.x < 0.999f || tint.y < 0.999f || tint.z < 0.999f;
 }
 
-inline bool cutoutChromaKeyGreen(float r, float g, float b) {
-  return (g > 0.85f && r < 0.16f && b < 0.16f);
-}
-
 inline int textureForTileFace(int tile, BlockFace face) {
   if (tile == static_cast<int>(TileId::Cactus)) {
     if (face == BlockFace::Top) {
@@ -235,9 +231,7 @@ struct FaceBounds {
 };
 
 inline FaceBounds computeFaceBounds(int tile, BlockFace face, float x, float y, float z, float inflate, bool waterHasSameAbove) {
-  const bool isCactus = isCactusRenderTile(tile);
-  const float cactusSideInset = cactusSideInsetForFace(tile, face);
-  const float cactusCornerTrim = isCactus ? 0.016f : 0.0f;
+  const float sideInset = cactusSideInsetForFace(tile, face);
 
   FaceBounds bounds;
   bounds.x0 = x - inflate;
@@ -246,18 +240,18 @@ inline FaceBounds computeFaceBounds(int tile, BlockFace face, float x, float y, 
   bounds.maxY = faceTopYForTile(tile, y, inflate, waterHasSameAbove);
   bounds.z0 = z - inflate;
   bounds.z1 = z + 1.0f + inflate;
-  bounds.sideX0 = bounds.x0 + cactusCornerTrim;
-  bounds.sideX1 = bounds.x1 - cactusCornerTrim;
-  bounds.sideZ0 = bounds.z0 + cactusCornerTrim;
-  bounds.sideZ1 = bounds.z1 - cactusCornerTrim;
-  bounds.topX0 = isCactus ? bounds.sideX0 : bounds.x0;
-  bounds.topX1 = isCactus ? bounds.sideX1 : bounds.x1;
-  bounds.topZ0 = isCactus ? bounds.sideZ0 : bounds.z0;
-  bounds.topZ1 = isCactus ? bounds.sideZ1 : bounds.z1;
-  bounds.northZ = bounds.z0 + cactusSideInset;
-  bounds.southZ = bounds.z1 - cactusSideInset;
-  bounds.westX = bounds.x0 + cactusSideInset;
-  bounds.eastX = bounds.x1 - cactusSideInset;
+  bounds.sideX0 = bounds.x0;
+  bounds.sideX1 = bounds.x1;
+  bounds.sideZ0 = bounds.z0;
+  bounds.sideZ1 = bounds.z1;
+  bounds.topX0 = bounds.x0;
+  bounds.topX1 = bounds.x1;
+  bounds.topZ0 = bounds.z0;
+  bounds.topZ1 = bounds.z1;
+  bounds.northZ = bounds.z0 + sideInset;
+  bounds.southZ = bounds.z1 - sideInset;
+  bounds.westX = bounds.x0 + sideInset;
+  bounds.eastX = bounds.x1 - sideInset;
   return bounds;
 }
 

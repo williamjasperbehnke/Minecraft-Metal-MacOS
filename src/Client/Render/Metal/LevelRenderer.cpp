@@ -63,6 +63,74 @@ simd_float3 applyCactusCutoutTint(int tile, simd_float3 color) {
   return color;
 }
 
+void setFacePositions(render::BlockFace face, const render::FaceBounds& bounds, TerrainVertex& v0, TerrainVertex& v1, TerrainVertex& v2,
+                      TerrainVertex& v3) {
+  switch (face) {
+    case render::BlockFace::Top:
+      v0.position = {bounds.topX0, bounds.maxY, bounds.topZ0};
+      v1.position = {bounds.topX1, bounds.maxY, bounds.topZ0};
+      v2.position = {bounds.topX1, bounds.maxY, bounds.topZ1};
+      v3.position = {bounds.topX0, bounds.maxY, bounds.topZ1};
+      return;
+    case render::BlockFace::Bottom:
+      v0.position = {bounds.x0, bounds.minY, bounds.z1};
+      v1.position = {bounds.x1, bounds.minY, bounds.z1};
+      v2.position = {bounds.x1, bounds.minY, bounds.z0};
+      v3.position = {bounds.x0, bounds.minY, bounds.z0};
+      return;
+    case render::BlockFace::North:
+      v0.position = {bounds.sideX1, bounds.minY, bounds.northZ};
+      v1.position = {bounds.sideX1, bounds.maxY, bounds.northZ};
+      v2.position = {bounds.sideX0, bounds.maxY, bounds.northZ};
+      v3.position = {bounds.sideX0, bounds.minY, bounds.northZ};
+      return;
+    case render::BlockFace::South:
+      v0.position = {bounds.sideX0, bounds.minY, bounds.southZ};
+      v1.position = {bounds.sideX0, bounds.maxY, bounds.southZ};
+      v2.position = {bounds.sideX1, bounds.maxY, bounds.southZ};
+      v3.position = {bounds.sideX1, bounds.minY, bounds.southZ};
+      return;
+    case render::BlockFace::West:
+      v0.position = {bounds.westX, bounds.minY, bounds.sideZ0};
+      v1.position = {bounds.westX, bounds.maxY, bounds.sideZ0};
+      v2.position = {bounds.westX, bounds.maxY, bounds.sideZ1};
+      v3.position = {bounds.westX, bounds.minY, bounds.sideZ1};
+      return;
+    case render::BlockFace::East:
+      v0.position = {bounds.eastX, bounds.minY, bounds.sideZ1};
+      v1.position = {bounds.eastX, bounds.maxY, bounds.sideZ1};
+      v2.position = {bounds.eastX, bounds.maxY, bounds.sideZ0};
+      v3.position = {bounds.eastX, bounds.minY, bounds.sideZ0};
+      return;
+  }
+}
+
+void setFaceUv(render::BlockFace face, float u0, float v0uv, float u1, float v1uv, TerrainVertex& v0, TerrainVertex& v1, TerrainVertex& v2,
+               TerrainVertex& v3) {
+  switch (face) {
+    case render::BlockFace::North:
+      v0.uv = {u1, v1uv};
+      v1.uv = {u1, v0uv};
+      v2.uv = {u0, v0uv};
+      v3.uv = {u0, v1uv};
+      return;
+    case render::BlockFace::Top:
+    case render::BlockFace::Bottom:
+    case render::BlockFace::South:
+    case render::BlockFace::West:
+    case render::BlockFace::East:
+      v0.uv = {u0, v1uv};
+      v1.uv = {u0, v0uv};
+      v2.uv = {u1, v0uv};
+      v3.uv = {u1, v1uv};
+      if (face == render::BlockFace::Top || face == render::BlockFace::Bottom) {
+        v1.uv = {u1, v1uv};
+        v3.uv = {u0, v0uv};
+      }
+      return;
+  }
+}
+
 }  // namespace
 
 LevelRenderer::LevelRenderer(MetalRenderer* metalRenderer) : metalRenderer_(metalRenderer) {
@@ -628,51 +696,14 @@ void LevelRenderer::appendFace(std::vector<TerrainVertex>& out, float x, float y
   const simd_float3 tint = detail::biomeTintForBlock(tile, static_cast<int>(x), static_cast<int>(z), allowGrassTint);
   const simd_float3 baseColor = {tint.x * shade, tint.y * shade, tint.z * shade};
   const simd_float3 color = applyCactusCutoutTint(tile, baseColor);
-  const render::FaceBounds bounds = render::computeFaceBounds(tile, static_cast<render::BlockFace>(face), x, y, z, inflate, waterHasSameAbove);
+  const render::FaceBounds bounds = render::computeFaceBounds(tile, face, x, y, z, inflate, waterHasSameAbove);
 
   TerrainVertex v0{};
   TerrainVertex v1{};
   TerrainVertex v2{};
   TerrainVertex v3{};
 
-  switch (face) {
-    case render::BlockFace::Top:
-      v0.position = {bounds.topX0, bounds.maxY, bounds.topZ0};
-      v1.position = {bounds.topX1, bounds.maxY, bounds.topZ0};
-      v2.position = {bounds.topX1, bounds.maxY, bounds.topZ1};
-      v3.position = {bounds.topX0, bounds.maxY, bounds.topZ1};
-      break;
-    case render::BlockFace::Bottom:
-      v0.position = {bounds.topX0, bounds.minY, bounds.topZ1};
-      v1.position = {bounds.topX1, bounds.minY, bounds.topZ1};
-      v2.position = {bounds.topX1, bounds.minY, bounds.topZ0};
-      v3.position = {bounds.topX0, bounds.minY, bounds.topZ0};
-      break;
-    case render::BlockFace::North:
-      v0.position = {bounds.sideX1, bounds.minY, bounds.northZ};
-      v1.position = {bounds.sideX1, bounds.maxY, bounds.northZ};
-      v2.position = {bounds.sideX0, bounds.maxY, bounds.northZ};
-      v3.position = {bounds.sideX0, bounds.minY, bounds.northZ};
-      break;
-    case render::BlockFace::South:
-      v0.position = {bounds.sideX0, bounds.minY, bounds.southZ};
-      v1.position = {bounds.sideX0, bounds.maxY, bounds.southZ};
-      v2.position = {bounds.sideX1, bounds.maxY, bounds.southZ};
-      v3.position = {bounds.sideX1, bounds.minY, bounds.southZ};
-      break;
-    case render::BlockFace::West:
-      v0.position = {bounds.westX, bounds.minY, bounds.sideZ0};
-      v1.position = {bounds.westX, bounds.maxY, bounds.sideZ0};
-      v2.position = {bounds.westX, bounds.maxY, bounds.sideZ1};
-      v3.position = {bounds.westX, bounds.minY, bounds.sideZ1};
-      break;
-    case render::BlockFace::East:
-      v0.position = {bounds.eastX, bounds.minY, bounds.sideZ1};
-      v1.position = {bounds.eastX, bounds.maxY, bounds.sideZ1};
-      v2.position = {bounds.eastX, bounds.maxY, bounds.sideZ0};
-      v3.position = {bounds.eastX, bounds.minY, bounds.sideZ0};
-      break;
-  }
+  setFacePositions(face, bounds, v0, v1, v2, v3);
 
   v0.color = color;
   v1.color = color;
@@ -681,47 +712,10 @@ void LevelRenderer::appendFace(std::vector<TerrainVertex>& out, float x, float y
 
   const float u0 = 0.0f;
   const float v0uv = 0.0f;
-  const float u1 = stabilizeUvEdges ? 0.9995f : 1.0f;
-  const float v1uv = stabilizeUvEdges ? 0.9995f : 1.0f;
+  const float u1 = stabilizeUvEdges ? 0.99999f : 1.0f;
+  const float v1uv = stabilizeUvEdges ? 0.99999f : 1.0f;
 
-  switch (face) {
-    case render::BlockFace::Top:
-      v0.uv = {u0, v1uv};
-      v1.uv = {u1, v1uv};
-      v2.uv = {u1, v0uv};
-      v3.uv = {u0, v0uv};
-      break;
-    case render::BlockFace::Bottom:
-      v0.uv = {u0, v1uv};
-      v1.uv = {u1, v1uv};
-      v2.uv = {u1, v0uv};
-      v3.uv = {u0, v0uv};
-      break;
-    case render::BlockFace::North:
-      v0.uv = {u1, v1uv};
-      v1.uv = {u1, v0uv};
-      v2.uv = {u0, v0uv};
-      v3.uv = {u0, v1uv};
-      break;
-    case render::BlockFace::South:
-      v0.uv = {u0, v1uv};
-      v1.uv = {u0, v0uv};
-      v2.uv = {u1, v0uv};
-      v3.uv = {u1, v1uv};
-      break;
-    case render::BlockFace::West:
-      v0.uv = {u0, v1uv};
-      v1.uv = {u0, v0uv};
-      v2.uv = {u1, v0uv};
-      v3.uv = {u1, v1uv};
-      break;
-    case render::BlockFace::East:
-      v0.uv = {u0, v1uv};
-      v1.uv = {u0, v0uv};
-      v2.uv = {u1, v0uv};
-      v3.uv = {u1, v1uv};
-      break;
-  }
+  setFaceUv(face, u0, v0uv, u1, v1uv, v0, v1, v2, v3);
 
   const simd_float2 tileOrigin = detail::atlasTileOrigin(textureIndex);
   v0.tileOrigin = tileOrigin;

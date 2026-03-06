@@ -43,10 +43,8 @@ inline bool shouldRenderFaceForTile(int tile, int neighborTile) {
     return true;
   }
 
-  // Water should behave like a connected volume and avoid emitting
-  // internal faces against non-occluding neighbors (flora/cactus/glass/etc.),
-  // which can appear as interior seam lines.
-  if (tile == static_cast<int>(TileId::Water) && isNonOccludingTileForFaceCulling(neighborTile)) {
+  // Water should avoid internal faces only against water itself.
+  if (tile == static_cast<int>(TileId::Water) && neighborTile == static_cast<int>(TileId::Water)) {
     return false;
   }
 
@@ -185,6 +183,15 @@ public:
   template <typename TextureLookupFn, typename EmitFaceFn>
   void build(const ChunkBuildView& view, std::vector<TerrainVertex>& transparentOut, TextureLookupFn&& textureForFace,
              EmitFaceFn&& emitFace) const {
+    // Draw water first, then other transparent geometry so glass/leaves overlay water.
+    buildPass(view, transparentOut, textureForFace, emitFace, true);
+    buildPass(view, transparentOut, textureForFace, emitFace, false);
+  }
+
+private:
+  template <typename TextureLookupFn, typename EmitFaceFn>
+  static void buildPass(const ChunkBuildView& view, std::vector<TerrainVertex>& transparentOut, TextureLookupFn&& textureForFace,
+                        EmitFaceFn&& emitFace, bool waterPass) {
     for (int lx = 0; lx < kChunkSide; ++lx) {
       for (int lz = 0; lz < kChunkSide; ++lz) {
         const int worldX = view.x0 + lx;
@@ -192,6 +199,10 @@ public:
         for (int y = Level::minBuildHeight; y < Level::maxBuildHeight; ++y) {
           const int tile = view.center->getTile(lx, y, lz);
           if (!isTransparentTile(tile) || isPlantTile(tile)) {
+            continue;
+          }
+          const bool isWater = (tile == static_cast<int>(TileId::Water));
+          if (waterPass != isWater) {
             continue;
           }
           if (shouldRenderFaceForTile(tile, view.tileAt(lx, y + 1, lz))) {

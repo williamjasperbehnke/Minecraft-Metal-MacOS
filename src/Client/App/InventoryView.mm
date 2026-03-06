@@ -70,7 +70,7 @@ NSRect atlasSrcRectForIndex(int atlasIndex, NSImage* terrainImage) {
 }
 
 NSImage* buildProcessedFlatIcon(NSImage* terrainImage, int atlasIndex, NSInteger outW, NSInteger outH, simd_float3 tint,
-                                bool applyTint, bool cutout, bool useChromaKey, bool* anyVisibleOut) {
+                                bool applyTint, bool cutout) {
   NSBitmapImageRep* rep = [[NSBitmapImageRep alloc]
       initWithBitmapDataPlanes:nullptr
                     pixelsWide:std::max<NSInteger>(1, outW)
@@ -83,7 +83,6 @@ NSImage* buildProcessedFlatIcon(NSImage* terrainImage, int atlasIndex, NSInteger
                    bytesPerRow:0
                   bitsPerPixel:0];
   if (!rep) {
-    if (anyVisibleOut) *anyVisibleOut = false;
     return nil;
   }
   [NSGraphicsContext saveGraphicsState];
@@ -105,7 +104,6 @@ NSImage* buildProcessedFlatIcon(NSImage* terrainImage, int atlasIndex, NSInteger
   const CGFloat tb = static_cast<CGFloat>(tint.z);
   unsigned char* pixels = [rep bitmapData];
   if (!pixels || [rep bitsPerSample] != 8 || [rep samplesPerPixel] < 4) {
-    if (anyVisibleOut) *anyVisibleOut = false;
     return nil;
   }
   const NSInteger bytesPerRow = [rep bytesPerRow];
@@ -114,7 +112,6 @@ NSImage* buildProcessedFlatIcon(NSImage* terrainImage, int atlasIndex, NSInteger
   const int gIndex = alphaFirst ? 2 : 1;
   const int bIndex = alphaFirst ? 3 : 2;
   const int aIndex = alphaFirst ? 0 : 3;
-  bool anyVisible = false;
 
   for (NSInteger py = 0; py < outH; ++py) {
     unsigned char* row = pixels + py * bytesPerRow;
@@ -125,7 +122,7 @@ NSImage* buildProcessedFlatIcon(NSImage* terrainImage, int atlasIndex, NSInteger
       CGFloat b = static_cast<CGFloat>(p[bIndex]) / 255.0;
       CGFloat a = static_cast<CGFloat>(p[aIndex]) / 255.0;
 
-      if (cutout && (a < 0.1 || (useChromaKey && mc::render::cutoutChromaKeyGreen(r, g, b)))) {
+      if (cutout && a < 0.1) {
         a = 0.0;
       }
       if (applyTint && a > 0.0) {
@@ -133,10 +130,6 @@ NSImage* buildProcessedFlatIcon(NSImage* terrainImage, int atlasIndex, NSInteger
         g *= tg;
         b *= tb;
       }
-      if (a > 0.001f) {
-        anyVisible = true;
-      }
-
       p[rIndex] = static_cast<unsigned char>(std::clamp(r, 0.0, 1.0) * 255.0 + 0.5);
       p[gIndex] = static_cast<unsigned char>(std::clamp(g, 0.0, 1.0) * 255.0 + 0.5);
       p[bIndex] = static_cast<unsigned char>(std::clamp(b, 0.0, 1.0) * 255.0 + 0.5);
@@ -144,7 +137,6 @@ NSImage* buildProcessedFlatIcon(NSImage* terrainImage, int atlasIndex, NSInteger
     }
   }
 
-  if (anyVisibleOut) *anyVisibleOut = anyVisible;
   NSImage* out = [[NSImage alloc] initWithSize:NSMakeSize(static_cast<CGFloat>(outW), static_cast<CGFloat>(outH))];
   [out addRepresentation:rep];
   return out;
@@ -280,17 +272,9 @@ NSFont* minecraftHudFont(CGFloat size) {
   if (_flatIconCache[key]) {
     return;
   }
-  const bool forcePlantTint = (tile == static_cast<int>(mc::TileId::TallGrass) || tile == static_cast<int>(mc::TileId::Fern));
   const simd_float3 tint = mc::render::biomeTintForBlock(tile, true);
-  const bool isTallGrassOrFern =
-      (tile == static_cast<int>(mc::TileId::TallGrass) || tile == static_cast<int>(mc::TileId::Fern));
-  bool hasVisible = false;
   NSImage* icon = buildProcessedFlatIcon(_terrainImage, atlasTextureForTile(tile), w, h, tint,
-                                         forcePlantTint || tileUsesBiomeTint(tile, true),
-                                         mc::render::isPlantRenderTile(tile), isTallGrassOrFern, &hasVisible);
-  if ((!icon || !hasVisible) && isTallGrassOrFern) {
-    icon = buildProcessedFlatIcon(_terrainImage, atlasTextureForTile(tile), w, h, tint, true, true, false, nullptr);
-  }
+                                         tileUsesBiomeTint(tile, true), mc::render::isPlantRenderTile(tile));
   if (!icon) {
     icon = [[NSImage alloc] initWithSize:NSMakeSize(static_cast<CGFloat>(w), static_cast<CGFloat>(h))];
     [icon lockFocus];
@@ -393,10 +377,13 @@ NSFont* minecraftHudFont(CGFloat size) {
   east3d[2].y += extraInset;
 
   if (mc::render::isCactusRenderTile(tile)) {
-    east3d[0].z += extraInset;
-    east3d[1].z += extraInset;
-    south3d[2].x += extraInset;
-    south3d[3].x += extraInset;
+    constexpr float cactusInset = 1.0f / 64.0f;
+    east3d[0].z += cactusInset;
+    east3d[1].z += cactusInset;
+    east3d[2].y += cactusInset;
+    south3d[1].y += cactusInset;
+    south3d[2].x += cactusInset;
+    south3d[3].x += cactusInset;
   }
 
   auto projectIso = [](const simd_float3& p) {
