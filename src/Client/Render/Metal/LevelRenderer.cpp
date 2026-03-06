@@ -472,27 +472,26 @@ void LevelRenderer::buildChunkMesh(int chunkX, int chunkZ, std::vector<TerrainVe
   };
   auto emitCactusFaces = [&](int lx, int y, int lz, int worldX, int worldZ, int tile) {
     struct FaceRule {
-      render::BlockFace renderFace;
-      render::BlockFace texFace;
+      render::BlockFace face;
       int neighborTile;
       float shade;
       bool skip = false;
     };
     const std::array<FaceRule, 6> rules = {{
-        {render::BlockFace::Top, render::BlockFace::Top, view.tileAt(lx, y + 1, lz), 1.0f, false},
-        {render::BlockFace::Bottom, render::BlockFace::Bottom, view.tileAt(lx, y - 1, lz), 0.55f,
+        {render::BlockFace::Top, view.tileAt(lx, y + 1, lz), 1.0f, false},
+        {render::BlockFace::Bottom, view.tileAt(lx, y - 1, lz), 0.55f,
          (tile == static_cast<int>(TileId::Bedrock) && y == Level::minBuildHeight)},
-        {render::BlockFace::North, render::BlockFace::North, view.tileAt(lx, y, lz - 1), 0.78f, false},
-        {render::BlockFace::South, render::BlockFace::South, view.tileAt(lx, y, lz + 1), 0.72f, false},
-        {render::BlockFace::West, render::BlockFace::West, view.tileAt(lx - 1, y, lz), 0.84f, false},
-        {render::BlockFace::East, render::BlockFace::East, view.tileAt(lx + 1, y, lz), 0.88f, false},
+        {render::BlockFace::North, view.tileAt(lx, y, lz - 1), 0.78f, false},
+        {render::BlockFace::South, view.tileAt(lx, y, lz + 1), 0.72f, false},
+        {render::BlockFace::West, view.tileAt(lx - 1, y, lz), 0.84f, false},
+        {render::BlockFace::East, view.tileAt(lx + 1, y, lz), 0.88f, false},
     }};
     for (const FaceRule& rule : rules) {
       if (rule.skip || !detail::shouldRenderFaceForTile(tile, rule.neighborTile)) {
         continue;
       }
-      appendFace(opaqueOut, static_cast<float>(worldX), static_cast<float>(y), static_cast<float>(worldZ), rule.renderFace,
-                 textureForFace(tile, rule.texFace), rule.shade, tile);
+      appendFace(opaqueOut, static_cast<float>(worldX), static_cast<float>(y), static_cast<float>(worldZ), rule.face,
+                 textureForFace(tile, rule.face), rule.shade, tile);
     }
   };
 
