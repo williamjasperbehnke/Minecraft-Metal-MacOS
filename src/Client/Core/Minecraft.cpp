@@ -207,9 +207,6 @@ void Minecraft::tick(double dtSeconds) {
   updateRendererState();
 }
 
-void Minecraft::render() {
-}
-
 void Minecraft::updateWorldStreaming(double dtSeconds) {
   if (!level_ || !localPlayer_) {
     return;
@@ -307,6 +304,44 @@ void Minecraft::setViewAspect(float aspect) {
   if (aspect > 0.001f) {
     viewAspect_ = aspect;
   }
+}
+
+void Minecraft::toggleInventory() {
+  if (!localPlayer_) {
+    return;
+  }
+  localPlayer_->inventory().toggleOpen();
+}
+
+void Minecraft::setInventoryOpen(bool open) {
+  if (!localPlayer_) {
+    return;
+  }
+  localPlayer_->inventory().setOpen(open);
+}
+
+bool Minecraft::isInventoryOpen() const {
+  return localPlayer_ ? localPlayer_->inventory().isOpen() : false;
+}
+
+void Minecraft::selectHotbarSlot(int slotIndex) {
+  if (!localPlayer_) {
+    return;
+  }
+  localPlayer_->inventory().selectHotbarIndex(slotIndex);
+}
+
+int Minecraft::selectedHotbarSlot() const {
+  return localPlayer_ ? localPlayer_->inventory().selectedHotbarIndex() : 0;
+}
+
+int Minecraft::selectedPlaceTile() const {
+  return localPlayer_ ? localPlayer_->inventory().selectedTile() : static_cast<int>(TileId::Grass);
+}
+
+const Inventory& Minecraft::inventory() const {
+  static const Inventory kFallbackInventory;
+  return localPlayer_ ? localPlayer_->inventory() : kFallbackInventory;
 }
 
 bool Minecraft::destroyBlockAt(int x, int y, int z) {

@@ -12,6 +12,7 @@
 namespace mc {
 
 class GameMode;
+class Inventory;
 class Level;
 class LevelRenderer;
 class LocalPlayer;
@@ -23,7 +24,6 @@ public:
 
   void init(MetalRenderer* renderer);
   void tick(double dtSeconds);
-  void render();
 
   void setInputState(const InputState& input);
   void setCreativeMode(bool enabled);
@@ -35,6 +35,13 @@ public:
   void addLookInput(float deltaX, float deltaY);
   void setBreakHeld(bool held);
   void setViewAspect(float aspect);
+  void toggleInventory();
+  void setInventoryOpen(bool open);
+  bool isInventoryOpen() const;
+  void selectHotbarSlot(int slotIndex);
+  int selectedHotbarSlot() const;
+  int selectedPlaceTile() const;
+  const Inventory& inventory() const;
 
   bool interactAtCrosshair(bool place);
   TerrainViewParams viewParams(float aspect) const;

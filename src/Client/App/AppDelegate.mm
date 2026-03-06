@@ -1,8 +1,9 @@
 #import "Client/App/AppDelegate.h"
-#import "Client/App/CrosshairView.h"
-#import "Client/App/DebugHudController.h"
 #import "Client/App/AppInputState.h"
 #import "Client/App/AppWorldRenderer.h"
+#import "Client/App/CrosshairView.h"
+#import "Client/App/DebugHudController.h"
+#import "Client/App/InventoryView.h"
 #import "Client/App/MetalRendererBridge.h"
 #import "Client/App/TerrainRenderResources.h"
 
@@ -11,9 +12,9 @@
 
 #include <algorithm>
 
+#include "Client/Core/Minecraft.h"
 #include "Client/Debug/ChunkBorderOverlay.h"
 #include "Client/Debug/RenderDebugController.h"
-#include "Client/Core/Minecraft.h"
 
 @interface AppDelegate ()
 - (void)installInputHandlers;
@@ -21,6 +22,8 @@
 - (void)disableRelativeMouse;
 - (void)centerCursorInWindow;
 - (void)handleFocusLoss;
+- (void)updateMouseCaptureState;
+- (NSEvent* _Nullable)handleInputEvent:(NSEvent*)event;
 @end
 
 @implementation AppDelegate {
@@ -39,6 +42,7 @@
   std::unique_ptr<mc::RenderDebugController> _debugController;
   std::unique_ptr<mc::ChunkBorderOverlay> _chunkBorderOverlay;
   CrosshairView* _crosshairView;
+  InventoryView* _inventoryView;
 
   id _inputMonitor;
   BOOL _relativeMouseEnabled;
@@ -85,6 +89,8 @@ constexpr const char* kWindowTitle = "Minecraft Clone";
   _crosshairView = [[CrosshairView alloc] initWithFrame:_mtkView.bounds];
   _crosshairView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
   [_mtkView addSubview:_crosshairView];
+  _inventoryView = [[InventoryView alloc] initWithFrame:_mtkView.bounds];
+  [_mtkView addSubview:_inventoryView];
 
   [_window makeKeyAndOrderFront:nil];
   [_window makeFirstResponder:_mtkView];
@@ -168,6 +174,17 @@ constexpr const char* kWindowTitle = "Minecraft Clone";
   [self disableRelativeMouse];
 }
 
+- (void)updateMouseCaptureState {
+  if (!_game) {
+    return;
+  }
+  if (_game->isInventoryOpen()) {
+    [self disableRelativeMouse];
+  } else if (_window && _window.isKeyWindow && NSApp.isActive) {
+    [self enableRelativeMouse];
+  }
+}
+
 - (void)centerCursorInWindow {
   if (!_window) {
     return;
@@ -189,57 +206,58 @@ constexpr const char* kWindowTitle = "Minecraft Clone";
                                                                  NSEventMaskLeftMouseDragged |
                                                                  NSEventMaskRightMouseDragged)
                                                          handler:^NSEvent* _Nullable(NSEvent* event) {
-    AppDelegate* strongSelf = self;
-    if (!strongSelf->_window || !strongSelf->_game || !strongSelf->_inputState) {
+    return [self handleInputEvent:event];
+  }];
+}
+
+- (NSEvent* _Nullable)handleInputEvent:(NSEvent*)event {
+  if (!_window || !_game || !_inputState) {
+    return event;
+  }
+  if (event.window != _window) {
+    return event;
+  }
+
+  const bool inventoryOpen = _game->isInventoryOpen();
+  switch (event.type) {
+    case NSEventTypeMouseMoved:
+    case NSEventTypeLeftMouseDragged:
+    case NSEventTypeRightMouseDragged:
+      if (inventoryOpen) {
+        return nil;
+      }
+      _game->addLookInput(static_cast<float>(event.deltaX), static_cast<float>(event.deltaY));
       return event;
-    }
-
-    if (event.window != strongSelf->_window) {
-      return event;
-    }
-
-    if (event.type == NSEventTypeMouseMoved ||
-        event.type == NSEventTypeLeftMouseDragged ||
-        event.type == NSEventTypeRightMouseDragged) {
-      strongSelf->_game->addLookInput(static_cast<float>(event.deltaX), static_cast<float>(event.deltaY));
-      return event;
-    }
-
-    if (event.type == NSEventTypeLeftMouseDown) {
-      strongSelf->_inputState->handleLeftMouse(true, strongSelf->_game.get());
+    case NSEventTypeLeftMouseDown:
+      if (inventoryOpen) {
+        return nil;
+      }
+      _inputState->handleLeftMouse(true, _game.get());
       return nil;
-    }
-
-    if (event.type == NSEventTypeLeftMouseUp) {
-      strongSelf->_inputState->handleLeftMouse(false, strongSelf->_game.get());
+    case NSEventTypeLeftMouseUp:
+      _inputState->handleLeftMouse(false, _game.get());
       return nil;
-    }
-
-    if (event.type == NSEventTypeRightMouseDown) {
-      strongSelf->_inputState->handleRightMouse(true, strongSelf->_game.get());
+    case NSEventTypeRightMouseDown:
+      if (inventoryOpen) {
+        return nil;
+      }
+      _inputState->handleRightMouse(true, _game.get());
       return nil;
-    }
-
-    if (event.type == NSEventTypeRightMouseUp) {
-      strongSelf->_inputState->handleRightMouse(false, strongSelf->_game.get());
+    case NSEventTypeRightMouseUp:
+      _inputState->handleRightMouse(false, _game.get());
       return nil;
-    }
-
-    if (event.type == NSEventTypeKeyDown || event.type == NSEventTypeKeyUp) {
-      if (strongSelf->_inputState->handleMovementKeyEvent(
-              event, (event.type == NSEventTypeKeyDown), strongSelf->_debugController.get(), strongSelf->_game.get())) {
+    case NSEventTypeKeyDown:
+    case NSEventTypeKeyUp:
+      if (_inputState->handleMovementKeyEvent(event, (event.type == NSEventTypeKeyDown), _debugController.get(), _game.get())) {
         return nil;
       }
       return event;
-    }
-
-    if (event.type == NSEventTypeFlagsChanged) {
-      strongSelf->_inputState->handleModifierFlagsChanged(event.modifierFlags);
+    case NSEventTypeFlagsChanged:
+      _inputState->handleModifierFlagsChanged(event.modifierFlags);
       return nil;
-    }
-
-    return event;
-  }];
+    default:
+      return event;
+  }
 }
 
 - (void)mtkView:(MTKView*)view drawableSizeWillChange:(CGSize)size {
@@ -265,9 +283,11 @@ constexpr const char* kWindowTitle = "Minecraft Clone";
   _game->setInputState(_inputState ? _inputState->currentInputState() : mc::InputState{});
   _game->setBreakHeld(_inputState && _inputState->leftMouseHeld());
   _game->tick(dt);
-  if (_inputState) {
+  if (_inputState && !_game->isInventoryOpen()) {
     _inputState->advancePlacement(dt, [self]() { self->_game->interactAtCrosshair(true); });
   }
+  [self updateMouseCaptureState];
+  _crosshairView.hidden = _game->isInventoryOpen() ? YES : NO;
   if (_relativeMouseEnabled) {
     [self centerCursorInWindow];
   }
@@ -280,6 +300,7 @@ constexpr const char* kWindowTitle = "Minecraft Clone";
                             _debugController ? _debugController->renderMode() : mc::RenderDebugController::RenderMode::Textured,
                             renderResult.hasLookTarget, renderResult.lookX, renderResult.lookY, renderResult.lookZ,
                             renderResult.opaqueVertices, renderResult.transparentVertices, _smoothedFrameMs);
+  [_inventoryView updateFromGame:*_game];
 }
 
 @end

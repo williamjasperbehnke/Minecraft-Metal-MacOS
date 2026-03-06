@@ -11,7 +11,17 @@ constexpr double kPlaceRepeatInterval = 0.16;
 constexpr double kSprintTapWindowSeconds = 0.28;
 
 enum KeyCode : unsigned short {
+  Key1 = 18,
+  Key2 = 19,
+  Key3 = 20,
+  Key4 = 21,
+  Key5 = 23,
+  Key6 = 22,
+  Key7 = 26,
+  Key8 = 28,
+  Key9 = 25,
   KeyA = 0,
+  KeyE = 14,
   KeyS = 1,
   KeyD = 2,
   KeyG = 5,
@@ -30,10 +40,42 @@ enum KeyCode : unsigned short {
   KeyUpArrow = 126,
 };
 
+int hotbarIndexForKeyCode(unsigned short keyCode) {
+  switch (keyCode) {
+    case Key1: return 0;
+    case Key2: return 1;
+    case Key3: return 2;
+    case Key4: return 3;
+    case Key5: return 4;
+    case Key6: return 5;
+    case Key7: return 6;
+    case Key8: return 7;
+    case Key9: return 8;
+    default: return -1;
+  }
+}
+
 }  // namespace
 
 bool AppInputState::handleMovementKeyEvent(NSEvent* event, BOOL isPressed, RenderDebugController* debugController,
                                            Minecraft* game) {
+  if (isPressed && !event.isARepeat && game) {
+    if (event.keyCode == KeyE) {
+      game->toggleInventory();
+      setInventoryOpen(game->isInventoryOpen(), game);
+      return true;
+    }
+    const int hotbarIndex = hotbarIndexForKeyCode(event.keyCode);
+    if (hotbarIndex >= 0) {
+      game->selectHotbarSlot(hotbarIndex);
+      return true;
+    }
+  }
+
+  if (game && game->isInventoryOpen()) {
+    return true;
+  }
+
   switch (event.keyCode) {
     case KeyW:
     case KeyUpArrow:
@@ -132,6 +174,26 @@ void AppInputState::resetForFocusLoss(Minecraft* game) {
   sprintHeld_ = NO;
   sprintLatched_ = NO;
   crouch_ = NO;
+  placeRepeatAccumulator_ = 0.0;
+  if (game) {
+    game->setBreakHeld(false);
+    game->setInventoryOpen(false);
+  }
+}
+
+void AppInputState::setInventoryOpen(bool open, Minecraft* game) {
+  if (!open) {
+    return;
+  }
+  leftMouseHeld_ = NO;
+  rightMouseHeld_ = NO;
+  jump_ = NO;
+  moveForward_ = NO;
+  moveBackward_ = NO;
+  moveLeft_ = NO;
+  moveRight_ = NO;
+  sprintHeld_ = NO;
+  sprintLatched_ = NO;
   placeRepeatAccumulator_ = 0.0;
   if (game) {
     game->setBreakHeld(false);

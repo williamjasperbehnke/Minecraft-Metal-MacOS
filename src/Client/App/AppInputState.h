@@ -20,6 +20,7 @@ public:
   void handleLeftMouse(bool pressed, Minecraft* game);
   void handleRightMouse(bool pressed, Minecraft* game);
   void resetForFocusLoss(Minecraft* game);
+  void setInventoryOpen(bool open, Minecraft* game);
   void advancePlacement(double dtSeconds, const std::function<void()>& placeAction);
 
   InputState currentInputState() const;

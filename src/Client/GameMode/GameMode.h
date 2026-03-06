@@ -32,6 +32,9 @@ protected:
   bool canReplaceForPlacement(int tile) const;
   bool blocksPlayerPlacement(int x, int y, int z) const;
   bool canDestroyTile(int tile) const;
+  bool destroyBlockAtDefault(int x, int y, int z);
+  bool placeBlockAtDefault(int x, int y, int z);
+  int placeTile() const;
 
   Minecraft* minecraft_;
   Level* level_ = nullptr;
