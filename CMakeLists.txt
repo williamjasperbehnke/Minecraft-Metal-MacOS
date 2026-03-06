@@ -63,9 +63,6 @@ set(SRC
   src/Client/Debug/ChunkBorderOverlay.cpp
   src/Client/Debug/RenderDebugController.cpp
   src/Client/GameMode/GameMode.cpp
-  src/Client/GameMode/CreativeGameMode.cpp
-  src/Client/GameMode/SpectatorGameMode.cpp
-  src/Client/GameMode/SurvivalGameMode.cpp
   src/Client/Render/Particles/BreakingParticles.cpp
   src/Client/Render/Metal/MetalRenderer.mm
   src/Client/Render/Metal/LevelRenderer.cpp

@@ -287,7 +287,7 @@ constexpr const char* kWindowTitle = "Minecraft Clone";
     _inputState->advancePlacement(dt, [self]() { self->_game->interactAtCrosshair(true); });
   }
   [self updateMouseCaptureState];
-  _crosshairView.hidden = _game->isInventoryOpen() ? YES : NO;
+  _crosshairView.hidden = (_game->isInventoryOpen() || _game->isSpectatorMode()) ? YES : NO;
   if (_relativeMouseEnabled) {
     [self centerCursorInWindow];
   }

@@ -486,6 +486,9 @@ void Minecraft::rebuildGameMode(GameModeType mode) {
 }
 
 bool Minecraft::lookTargetBlock(int* x, int* y, int* z) const {
+  if (isSpectatorMode()) {
+    return false;
+  }
   return blockInteractionController_.lookTargetBlock(x, y, z);
 }
 

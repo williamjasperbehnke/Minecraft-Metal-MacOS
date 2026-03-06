@@ -82,7 +82,7 @@ bool GameMode::canDestroyTile(int tile) const {
   return tile != static_cast<int>(TileId::Water) && tile != static_cast<int>(TileId::Bedrock);
 }
 
-bool GameMode::destroyBlockAtDefault(int x, int y, int z) {
+bool GameMode::destroyBlockAt(int x, int y, int z) {
   if (!hasLevelAndPlayer() || !withinBlockReach(x, y, z)) {
     return false;
   }
@@ -94,7 +94,7 @@ bool GameMode::destroyBlockAtDefault(int x, int y, int z) {
   return level_->setTile(x, y, z, static_cast<int>(TileId::Air));
 }
 
-bool GameMode::placeBlockAtDefault(int x, int y, int z) {
+bool GameMode::placeBlockAt(int x, int y, int z) {
   if (!hasLevelAndPlayer() || !withinBlockReach(x, y, z) || !inBuildHeight(y)) {
     return false;
   }
