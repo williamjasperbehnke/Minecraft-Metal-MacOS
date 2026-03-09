@@ -1,4 +1,5 @@
 #import "Client/App/InventoryView.h"
+#import "Client/App/UiImageHelpers.h"
 
 #include <algorithm>
 #include <array>
@@ -25,58 +26,6 @@ constexpr CGFloat kInventoryMainTopY = 83.0;
 constexpr CGFloat kInventoryHotbarX = 7.0;
 constexpr CGFloat kInventoryHotbarTopY = 141.0;
 constexpr CFTimeInterval kHotbarTooltipDuration = 1.2;
-
-NSString* findAssetPath(NSString* relativePath) {
-  NSString* bundlePath = [[NSBundle mainBundle] bundlePath];
-  NSString* cursor = [bundlePath stringByDeletingLastPathComponent];
-  NSFileManager* fm = [NSFileManager defaultManager];
-  for (int i = 0; i < 10; ++i) {
-    NSString* localAssetPath = [cursor stringByAppendingPathComponent:relativePath];
-    if ([fm fileExistsAtPath:localAssetPath]) {
-      return localAssetPath;
-    }
-    NSString* parent = [cursor stringByDeletingLastPathComponent];
-    if ([parent isEqualToString:cursor]) {
-      break;
-    }
-    cursor = parent;
-  }
-  return nil;
-}
-
-CGSize imagePixelSize(NSImage* image) {
-  if (!image) {
-    return CGSizeZero;
-  }
-  CGImageRef cg = [image CGImageForProposedRect:nullptr context:nil hints:nil];
-  if (cg) {
-    return CGSizeMake(static_cast<CGFloat>(CGImageGetWidth(cg)), static_cast<CGFloat>(CGImageGetHeight(cg)));
-  }
-  for (NSImageRep* rep in image.representations) {
-    if ([rep isKindOfClass:[NSBitmapImageRep class]]) {
-      return CGSizeMake(static_cast<CGFloat>(((NSBitmapImageRep*)rep).pixelsWide),
-                        static_cast<CGFloat>(((NSBitmapImageRep*)rep).pixelsHigh));
-    }
-  }
-  return CGSizeMake(image.size.width, image.size.height);
-}
-
-NSRect atlasSrcRectTopLeftPixels(NSImage* image, CGFloat pxX, CGFloat pxY, CGFloat pxW, CGFloat pxH) {
-  if (!image) {
-    return NSZeroRect;
-  }
-  const CGSize pixel = imagePixelSize(image);
-  if (pixel.width <= 0.0 || pixel.height <= 0.0 || image.size.width <= 0.0 || image.size.height <= 0.0) {
-    return NSZeroRect;
-  }
-  const CGFloat sx = image.size.width / pixel.width;
-  const CGFloat sy = image.size.height / pixel.height;
-  const CGFloat x = pxX * sx;
-  const CGFloat y = image.size.height - ((pxY + pxH) * sy);
-  const CGFloat w = pxW * sx;
-  const CGFloat h = pxH * sy;
-  return NSMakeRect(x, y, w, h);
-}
 
 int atlasTextureForTile(int tile) {
   return mc::render::textureForTileFace(tile, mc::render::BlockFace::North);
@@ -212,9 +161,9 @@ NSFont* minecraftHudFont(CGFloat size) {
   static bool sFontInit = false;
   if (!sFontInit) {
     sFontInit = true;
-    NSString* fontPath = findAssetPath(@"MinecraftMetal/Assets/Mojangles.ttf");
+    NSString* fontPath = mc::app::ui::findAssetPath(@"MinecraftMetal/Assets/Mojangles.ttf");
     if (!fontPath) {
-      fontPath = findAssetPath(@"MinecraftMetal/Assets/MojangFont11.ttf");
+      fontPath = mc::app::ui::findAssetPath(@"MinecraftMetal/Assets/MojangFont11.ttf");
     }
     if (fontPath) {
       NSURL* url = [NSURL fileURLWithPath:fontPath];
@@ -290,24 +239,24 @@ NSFont* minecraftHudFont(CGFloat size) {
     _cachedHotFlat = 0;
     _cachedHotCube = 0;
 
-    NSString* terrainPath = findAssetPath(@"MinecraftMetal/Assets/terrain.png");
+    NSString* terrainPath = mc::app::ui::findAssetPath(@"MinecraftMetal/Assets/terrain.png");
     if (terrainPath) {
       _terrainImage = [[NSImage alloc] initWithContentsOfFile:terrainPath];
     }
-    NSString* hotbarBackPath = findAssetPath(@"MinecraftMetal/Assets/hotbar_item_back.png");
+    NSString* hotbarBackPath = mc::app::ui::findAssetPath(@"MinecraftMetal/Assets/hotbar_item_back.png");
     if (hotbarBackPath) {
       _hotbarBackImage = [[NSImage alloc] initWithContentsOfFile:hotbarBackPath];
     }
-    NSString* hotbarSelectedPath = findAssetPath(@"MinecraftMetal/Assets/hotbar_item_selected.png");
+    NSString* hotbarSelectedPath = mc::app::ui::findAssetPath(@"MinecraftMetal/Assets/hotbar_item_selected.png");
     if (hotbarSelectedPath) {
       _hotbarSelectedImage = [[NSImage alloc] initWithContentsOfFile:hotbarSelectedPath];
     }
-    NSString* inventoryPanelPath = findAssetPath(@"MinecraftMetal/Assets/inventory_panel.png");
+    NSString* inventoryPanelPath = mc::app::ui::findAssetPath(@"MinecraftMetal/Assets/inventory_panel.png");
     if (inventoryPanelPath) {
       _inventoryPanelImage = [[NSImage alloc] initWithContentsOfFile:inventoryPanelPath];
     }
     {
-      NSString* slotPath = findAssetPath(@"MinecraftMetal/Assets/slot.png");
+      NSString* slotPath = mc::app::ui::findAssetPath(@"MinecraftMetal/Assets/slot.png");
       if (slotPath) {
         _slotHighlightImage = [[NSImage alloc] initWithContentsOfFile:slotPath];
       }
@@ -747,7 +696,7 @@ NSFont* minecraftHudFont(CGFloat size) {
 - (void)drawInventorySlotHighlightInRect:(NSRect)slotRect {
   if (_slotHighlightImage) {
     NSGraphicsContext.currentContext.imageInterpolation = NSImageInterpolationNone;
-    const NSRect src = atlasSrcRectTopLeftPixels(_slotHighlightImage, 0.0, 18.0, 18.0, 18.0);
+    const NSRect src = mc::app::ui::atlasSrcRectTopLeftPixels(_slotHighlightImage, 0.0, 18.0, 18.0, 18.0);
     [_slotHighlightImage drawInRect:slotRect fromRect:src operation:NSCompositingOperationSourceOver fraction:1.0];
     return;
   }
