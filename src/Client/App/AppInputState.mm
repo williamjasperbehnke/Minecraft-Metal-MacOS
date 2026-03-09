@@ -283,6 +283,12 @@ int AppInputState::takePendingHotbarTooltipTile() {
 }
 
 void AppInputState::handleModifierFlagsChanged(NSEventModifierFlags flags) {
+  if (inventoryOpen_) {
+    crouch_ = NO;
+    sprintHeld_ = NO;
+    sprintLatched_ = NO;
+    return;
+  }
   const NSEventModifierFlags f = (flags & NSEventModifierFlagDeviceIndependentFlagsMask);
   crouch_ = ((f & NSEventModifierFlagShift) != 0);
   sprintHeld_ = ((f & NSEventModifierFlagControl) != 0);
@@ -326,6 +332,7 @@ void AppInputState::resetForFocusLoss(Minecraft* game) {
 }
 
 void AppInputState::setInventoryOpen(bool open, Minecraft* game) {
+  inventoryOpen_ = open ? YES : NO;
   inventoryLeftMouseHeld_ = NO;
   inventoryLeftDragSplit_ = NO;
   inventoryLeftDownSlot_ = -1;

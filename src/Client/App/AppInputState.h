@@ -52,6 +52,7 @@ private:
   CFAbsoluteTime lastForwardTapTime_ = 0.0;
   double placeRepeatAccumulator_ = 0.0;
   int pendingHotbarTooltipTile_ = 0;
+  BOOL inventoryOpen_ = NO;
 };
 
 }  // namespace mc::app
