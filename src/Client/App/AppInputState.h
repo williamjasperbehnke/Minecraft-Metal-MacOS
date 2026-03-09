@@ -2,9 +2,13 @@
 
 #import <Cocoa/Cocoa.h>
 
+#include <array>
 #include <functional>
 
 #include "Client/Core/InputState.h"
+#include "Client/Inventory/Inventory.h"
+
+@class InventoryView;
 
 namespace mc {
 class Minecraft;
@@ -16,10 +20,15 @@ namespace mc::app {
 class AppInputState {
 public:
   bool handleMovementKeyEvent(NSEvent* event, BOOL isPressed, RenderDebugController* debugController, Minecraft* game);
+  bool handleScrollWheelEvent(NSEvent* event, Minecraft* game);
+  bool handleInventoryMouseEvent(NSEvent* event, Minecraft* game, InventoryView* inventoryView);
+  bool handleInventoryKeyDownEvent(NSEvent* event, Minecraft* game, InventoryView* inventoryView);
+  int takePendingHotbarTooltipTile();
   void handleModifierFlagsChanged(NSEventModifierFlags flags);
   void handleLeftMouse(bool pressed, Minecraft* game);
   void handleRightMouse(bool pressed, Minecraft* game);
   void resetForFocusLoss(Minecraft* game);
+  void setInventoryOpen(bool open, Minecraft* game);
   void advancePlacement(double dtSeconds, const std::function<void()>& placeAction);
 
   InputState currentInputState() const;
@@ -36,8 +45,14 @@ private:
   BOOL crouch_ = NO;
   BOOL leftMouseHeld_ = NO;
   BOOL rightMouseHeld_ = NO;
+  BOOL inventoryLeftMouseHeld_ = NO;
+  BOOL inventoryLeftDragSplit_ = NO;
+  int inventoryLeftDownSlot_ = -1;
+  std::array<bool, mc::Inventory::kTotalSlots> inventoryRightDragVisited_{};
   CFAbsoluteTime lastForwardTapTime_ = 0.0;
   double placeRepeatAccumulator_ = 0.0;
+  int pendingHotbarTooltipTile_ = 0;
+  BOOL inventoryOpen_ = NO;
 };
 
 }  // namespace mc::app

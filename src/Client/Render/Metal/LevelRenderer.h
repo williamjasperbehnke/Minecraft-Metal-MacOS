@@ -7,6 +7,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "Client/Render/BlockRender.h"
 #include "Client/Render/Metal/MetalRenderer.h"
 #include "Client/Render/Particles/BreakingParticles.h"
 #include "World/Level/LevelListener.h"
@@ -38,24 +39,15 @@ public:
   void allChanged() override;
 
 private:
-  enum class Face {
-    Top,
-    Bottom,
-    North,
-    South,
-    West,
-    East,
-  };
-
-  void appendFace(std::vector<TerrainVertex>& out, float x, float y, float z, Face face, int textureIndex, float shade, int tile,
+  void appendFace(std::vector<TerrainVertex>& out, float x, float y, float z, render::BlockFace face, int textureIndex, float shade, int tile,
                   float inflate = 0.0f, bool stabilizeUvEdges = false, bool waterHasSameAbove = false);
-  int textureForTileFace(int tile, Face face) const;
   void buildChunkMesh(int chunkX, int chunkZ, std::vector<TerrainVertex>& opaqueOut, std::vector<TerrainVertex>& transparentOut);
   void composeTerrainMesh();
   void uploadSortedTransparentMesh();
   void refreshVisibleChunks();
   void markChunkDirty(int chunkX, int chunkZ);
   void markChunkAndNeighborsDirty(int chunkX, int chunkZ, bool urgent, bool includeCenter = true);
+  void insertDirtyChunk(std::int64_t key, bool urgent);
   static std::int64_t chunkKey(int chunkX, int chunkZ);
   void appendDestroyOverlay();
   void appendSelectionOverlay();

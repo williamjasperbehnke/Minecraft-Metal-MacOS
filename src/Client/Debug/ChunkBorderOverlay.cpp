@@ -110,18 +110,6 @@ void ChunkBorderOverlay::build(int centerChunkX, int centerChunkZ, int radiusChu
       const float zMin = static_cast<float>(cz * 16);
       const float zMax = zMin + 16.0f;
 
-      // Bottom rectangle.
-      pushLine(out, xMin, y0, zMin, xMax, y0, zMin, colorR, colorG, colorB);
-      pushLine(out, xMax, y0, zMin, xMax, y0, zMax, colorR, colorG, colorB);
-      pushLine(out, xMax, y0, zMax, xMin, y0, zMax, colorR, colorG, colorB);
-      pushLine(out, xMin, y0, zMax, xMin, y0, zMin, colorR, colorG, colorB);
-
-      // Top rectangle.
-      pushLine(out, xMin, y1, zMin, xMax, y1, zMin, colorR, colorG, colorB);
-      pushLine(out, xMax, y1, zMin, xMax, y1, zMax, colorR, colorG, colorB);
-      pushLine(out, xMax, y1, zMax, xMin, y1, zMax, colorR, colorG, colorB);
-      pushLine(out, xMin, y1, zMax, xMin, y1, zMin, colorR, colorG, colorB);
-
       // Verticals.
       pushLine(out, xMin, y0, zMin, xMin, y1, zMin, colorR, colorG, colorB);
       pushLine(out, xMax, y0, zMin, xMax, y1, zMin, colorR, colorG, colorB);

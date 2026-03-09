@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cmath>
 
+#include "Client/Render/BlockRender.h"
 #include "Client/Render/Metal/ChunkMeshers.h"
 #include "World/Chunk/LevelChunk.h"
 #include "World/Level/Level.h"
@@ -14,13 +15,23 @@ namespace mc {
 
 namespace {
 
-constexpr int kTexCactusTop = 69;      // (5,4) in the 16x16 terrain atlas
-constexpr int kTexCactusSide = 70;     // (6,4)
-constexpr int kTexCactusBottom = 71;   // (7,4)
 constexpr float kParticleTickSeconds = 1.0f / 60.0f;
+
+struct DirtyCandidate {
+  std::int64_t key = 0;
+  int dist2 = 0;
+};
 
 int floorDiv16(int v) {
   return v >= 0 ? v / 16 : (v - 15) / 16;
+}
+
+int chunkXFromKey(std::int64_t key) {
+  return static_cast<int>(key >> 32);
+}
+
+int chunkZFromKey(std::int64_t key) {
+  return static_cast<int>(static_cast<std::int32_t>(key & 0xffffffff));
 }
 
 bool isOverlayRenderableTile(int tile) {
@@ -44,89 +55,80 @@ simd_float3 breakParticleTintForFace(int tile, int x, int z, int faceOrdinal) {
   return {1.0f, 1.0f, 1.0f};
 }
 
-bool isCactusRenderTile(int tile) {
-  return tile == static_cast<int>(TileId::Cactus);
-}
-
-bool isWaterRenderTile(int tile) {
-  return tile == static_cast<int>(TileId::Water);
-}
-
 simd_float3 applyCactusCutoutTint(int tile, simd_float3 color) {
-  if (isCactusRenderTile(tile)) {
+  if (render::isCactusRenderTile(tile)) {
     // Negative red channel marks cutout geometry in the fragment shader.
     color.x = -std::abs(color.x);
   }
   return color;
 }
 
-float cactusSideInsetForFace(int tile, int faceOrdinal) {
-  if (!isCactusRenderTile(tile)) {
-    return 0.0f;
+void setFacePositions(render::BlockFace face, const render::FaceBounds& bounds, TerrainVertex& v0, TerrainVertex& v1, TerrainVertex& v2,
+                      TerrainVertex& v3) {
+  switch (face) {
+    case render::BlockFace::Top:
+      v0.position = {bounds.topX0, bounds.maxY, bounds.topZ0};
+      v1.position = {bounds.topX1, bounds.maxY, bounds.topZ0};
+      v2.position = {bounds.topX1, bounds.maxY, bounds.topZ1};
+      v3.position = {bounds.topX0, bounds.maxY, bounds.topZ1};
+      return;
+    case render::BlockFace::Bottom:
+      v0.position = {bounds.x0, bounds.minY, bounds.z1};
+      v1.position = {bounds.x1, bounds.minY, bounds.z1};
+      v2.position = {bounds.x1, bounds.minY, bounds.z0};
+      v3.position = {bounds.x0, bounds.minY, bounds.z0};
+      return;
+    case render::BlockFace::North:
+      v0.position = {bounds.sideX1, bounds.minY, bounds.northZ};
+      v1.position = {bounds.sideX1, bounds.maxY, bounds.northZ};
+      v2.position = {bounds.sideX0, bounds.maxY, bounds.northZ};
+      v3.position = {bounds.sideX0, bounds.minY, bounds.northZ};
+      return;
+    case render::BlockFace::South:
+      v0.position = {bounds.sideX0, bounds.minY, bounds.southZ};
+      v1.position = {bounds.sideX0, bounds.maxY, bounds.southZ};
+      v2.position = {bounds.sideX1, bounds.maxY, bounds.southZ};
+      v3.position = {bounds.sideX1, bounds.minY, bounds.southZ};
+      return;
+    case render::BlockFace::West:
+      v0.position = {bounds.westX, bounds.minY, bounds.sideZ0};
+      v1.position = {bounds.westX, bounds.maxY, bounds.sideZ0};
+      v2.position = {bounds.westX, bounds.maxY, bounds.sideZ1};
+      v3.position = {bounds.westX, bounds.minY, bounds.sideZ1};
+      return;
+    case render::BlockFace::East:
+      v0.position = {bounds.eastX, bounds.minY, bounds.sideZ1};
+      v1.position = {bounds.eastX, bounds.maxY, bounds.sideZ1};
+      v2.position = {bounds.eastX, bounds.maxY, bounds.sideZ0};
+      v3.position = {bounds.eastX, bounds.minY, bounds.sideZ0};
+      return;
   }
-  // LevelRenderer::Face ordinal order: Top(0), Bottom(1), North(2), South(3), West(4), East(5).
-  if (faceOrdinal >= 2 && faceOrdinal <= 5) {
-    return 1.0f / 16.0f;
-  }
-  return 0.0f;
 }
 
-float faceTopYForTile(int tile, float y, float inflate, bool waterHasSameAbove) {
-  if (isWaterRenderTile(tile)) {
-    if (waterHasSameAbove) {
-      return y + 1.0f + inflate;
-    }
-    return y + (14.0f / 16.0f) + inflate;
+void setFaceUv(render::BlockFace face, float u0, float v0uv, float u1, float v1uv, TerrainVertex& v0, TerrainVertex& v1, TerrainVertex& v2,
+               TerrainVertex& v3) {
+  switch (face) {
+    case render::BlockFace::North:
+      v0.uv = {u1, v1uv};
+      v1.uv = {u1, v0uv};
+      v2.uv = {u0, v0uv};
+      v3.uv = {u0, v1uv};
+      return;
+    case render::BlockFace::Top:
+    case render::BlockFace::Bottom:
+    case render::BlockFace::South:
+    case render::BlockFace::West:
+    case render::BlockFace::East:
+      v0.uv = {u0, v1uv};
+      v1.uv = {u0, v0uv};
+      v2.uv = {u1, v0uv};
+      v3.uv = {u1, v1uv};
+      if (face == render::BlockFace::Top || face == render::BlockFace::Bottom) {
+        v1.uv = {u1, v1uv};
+        v3.uv = {u0, v0uv};
+      }
+      return;
   }
-  return y + 1.0f + inflate;
-}
-
-struct FaceBounds {
-  float x0 = 0.0f;
-  float x1 = 1.0f;
-  float z0 = 0.0f;
-  float z1 = 1.0f;
-  float minY = 0.0f;
-  float maxY = 1.0f;
-  float topX0 = 0.0f;
-  float topX1 = 1.0f;
-  float topZ0 = 0.0f;
-  float topZ1 = 1.0f;
-  float sideX0 = 0.0f;
-  float sideX1 = 1.0f;
-  float sideZ0 = 0.0f;
-  float sideZ1 = 1.0f;
-  float northZ = 0.0f;
-  float southZ = 1.0f;
-  float westX = 0.0f;
-  float eastX = 1.0f;
-};
-
-FaceBounds computeFaceBounds(int tile, int faceOrdinal, float x, float y, float z, float inflate, bool waterHasSameAbove) {
-  const bool isCactus = isCactusRenderTile(tile);
-  const float cactusSideInset = cactusSideInsetForFace(tile, faceOrdinal);
-  const float cactusCornerTrim = isCactus ? 0.016 : 0.0f;
-
-  FaceBounds bounds;
-  bounds.x0 = x - inflate;
-  bounds.x1 = x + 1.0f + inflate;
-  bounds.minY = y - inflate;
-  bounds.maxY = faceTopYForTile(tile, y, inflate, waterHasSameAbove);
-  bounds.z0 = z - inflate;
-  bounds.z1 = z + 1.0f + inflate;
-  bounds.sideX0 = bounds.x0 + cactusCornerTrim;
-  bounds.sideX1 = bounds.x1 - cactusCornerTrim;
-  bounds.sideZ0 = bounds.z0 + cactusCornerTrim;
-  bounds.sideZ1 = bounds.z1 - cactusCornerTrim;
-  bounds.topX0 = isCactus ? bounds.sideX0 : bounds.x0;
-  bounds.topX1 = isCactus ? bounds.sideX1 : bounds.x1;
-  bounds.topZ0 = isCactus ? bounds.sideZ0 : bounds.z0;
-  bounds.topZ1 = isCactus ? bounds.sideZ1 : bounds.z1;
-  bounds.northZ = bounds.z0 + cactusSideInset;
-  bounds.southZ = bounds.z1 - cactusSideInset;
-  bounds.westX = bounds.x0 + cactusSideInset;
-  bounds.eastX = bounds.x1 - cactusSideInset;
-  return bounds;
 }
 
 }  // namespace
@@ -246,8 +248,8 @@ void LevelRenderer::tick() {
         return false;
       }
       const bool firstMeshBuild = (chunkMeshes_.find(key) == chunkMeshes_.end());
-      const int chunkX = static_cast<int>(key >> 32);
-      const int chunkZ = static_cast<int>(static_cast<std::int32_t>(key & 0xffffffff));
+      const int chunkX = chunkXFromKey(key);
+      const int chunkZ = chunkZFromKey(key);
       std::vector<TerrainVertex> chunkVertices;
       std::vector<TerrainVertex> transparentChunkVertices;
       buildChunkMesh(chunkX, chunkZ, chunkVertices, transparentChunkVertices);
@@ -262,27 +264,29 @@ void LevelRenderer::tick() {
       return true;
     };
 
+    auto collectCandidates = [&](const std::unordered_set<std::int64_t>& source, bool requireDirty) {
+      std::vector<DirtyCandidate> out;
+      out.reserve(source.size());
+      for (const std::int64_t key : source) {
+        if (requireDirty && dirtyChunks_.find(key) == dirtyChunks_.end()) {
+          continue;
+        }
+        if (visibleChunks_.find(key) == visibleChunks_.end()) {
+          continue;
+        }
+        const int dx = chunkXFromKey(key) - centerChunkX_;
+        const int dz = chunkZFromKey(key) - centerChunkZ_;
+        out.push_back({key, dx * dx + dz * dz});
+      }
+      std::sort(out.begin(), out.end(), [](const DirtyCandidate& a, const DirtyCandidate& b) {
+        return a.dist2 < b.dist2;
+      });
+      return out;
+    };
+
     // Process direct block-edit chunks first so border-adjacent chunk pairs are
     // rebuilt together, preventing one-frame seam flashes during mining/placing.
-    struct DirtyCandidate {
-      std::int64_t key = 0;
-      int dist2 = 0;
-    };
-    std::vector<DirtyCandidate> urgentCandidates;
-    urgentCandidates.reserve(urgentDirtyChunks_.size());
-    for (const std::int64_t key : urgentDirtyChunks_) {
-      if (dirtyChunks_.find(key) == dirtyChunks_.end() || visibleChunks_.find(key) == visibleChunks_.end()) {
-        continue;
-      }
-      const int chunkX = static_cast<int>(key >> 32);
-      const int chunkZ = static_cast<int>(static_cast<std::int32_t>(key & 0xffffffff));
-      const int dx = chunkX - centerChunkX_;
-      const int dz = chunkZ - centerChunkZ_;
-      urgentCandidates.push_back({key, dx * dx + dz * dz});
-    }
-    std::sort(urgentCandidates.begin(), urgentCandidates.end(), [](const DirtyCandidate& a, const DirtyCandidate& b) {
-      return a.dist2 < b.dist2;
-    });
+    std::vector<DirtyCandidate> urgentCandidates = collectCandidates(urgentDirtyChunks_, true);
     const bool smallUrgentBatch = urgentCandidates.size() <= 3;
     const int kMaxUrgentRebuildPerFrame = smallUrgentBatch
                                               ? static_cast<int>(urgentCandidates.size())
@@ -308,21 +312,7 @@ void LevelRenderer::tick() {
       }
     }
 
-    std::vector<DirtyCandidate> candidates;
-    candidates.reserve(dirtyChunks_.size());
-    for (const std::int64_t key : dirtyChunks_) {
-      if (visibleChunks_.find(key) == visibleChunks_.end()) {
-        continue;
-      }
-      const int chunkX = static_cast<int>(key >> 32);
-      const int chunkZ = static_cast<int>(static_cast<std::int32_t>(key & 0xffffffff));
-      const int dx = chunkX - centerChunkX_;
-      const int dz = chunkZ - centerChunkZ_;
-      candidates.push_back({key, dx * dx + dz * dz});
-    }
-    std::sort(candidates.begin(), candidates.end(), [](const DirtyCandidate& a, const DirtyCandidate& b) {
-      return a.dist2 < b.dist2;
-    });
+    std::vector<DirtyCandidate> candidates = collectCandidates(dirtyChunks_, false);
 
     for (const DirtyCandidate& c : candidates) {
       if (rebuilt >= kMaxChunkRebuildPerFrame) {
@@ -395,28 +385,18 @@ void LevelRenderer::tileChanged(int x, int /*y*/, int z) {
   const int localX = ((x % 16) + 16) % 16;
   const int localZ = ((z % 16) + 16) % 16;
 
-  const std::int64_t center = chunkKey(chunkX, chunkZ);
-  dirtyChunks_.insert(center);
-  urgentDirtyChunks_.insert(center);
+  insertDirtyChunk(chunkKey(chunkX, chunkZ), true);
   if (localX == 0) {
-    const std::int64_t west = chunkKey(chunkX - 1, chunkZ);
-    dirtyChunks_.insert(west);
-    urgentDirtyChunks_.insert(west);
+    insertDirtyChunk(chunkKey(chunkX - 1, chunkZ), true);
   }
   if (localX == 15) {
-    const std::int64_t east = chunkKey(chunkX + 1, chunkZ);
-    dirtyChunks_.insert(east);
-    urgentDirtyChunks_.insert(east);
+    insertDirtyChunk(chunkKey(chunkX + 1, chunkZ), true);
   }
   if (localZ == 0) {
-    const std::int64_t north = chunkKey(chunkX, chunkZ - 1);
-    dirtyChunks_.insert(north);
-    urgentDirtyChunks_.insert(north);
+    insertDirtyChunk(chunkKey(chunkX, chunkZ - 1), true);
   }
   if (localZ == 15) {
-    const std::int64_t south = chunkKey(chunkX, chunkZ + 1);
-    dirtyChunks_.insert(south);
-    urgentDirtyChunks_.insert(south);
+    insertDirtyChunk(chunkKey(chunkX, chunkZ + 1), true);
   }
   rebuildPending_ = true;
 }
@@ -446,137 +426,8 @@ void LevelRenderer::allChanged() {
   rebuildPending_ = true;
 }
 
-int LevelRenderer::textureForTileFace(int tile, Face face) const {
-  if (tile == static_cast<int>(TileId::Cactus)) {
-    if (face == Face::Top) {
-      return kTexCactusTop;
-    }
-    if (face == Face::Bottom) {
-      return kTexCactusBottom;
-    }
-    return kTexCactusSide;
-  }
-  if (tile == static_cast<int>(TileId::Ice)) {
-    return 67;
-  }
-  if (tile == static_cast<int>(TileId::Snow)) {
-    if (face == Face::Top) {
-      return 66;
-    }
-    if (face == Face::Bottom) {
-      return 2;
-    }
-    return 68;
-  }
-  if (tile == static_cast<int>(TileId::Glass)) {
-    return 49;
-  }
-  if (tile == static_cast<int>(TileId::Sandstone)) {
-    if (face == Face::Top) {
-      return 176;
-    }
-    if (face == Face::Bottom) {
-      return 208;
-    }
-    return 192;
-  }
-  if (tile == static_cast<int>(TileId::Gravel)) {
-    return 19;
-  }
-  if (tile == static_cast<int>(TileId::Cobblestone)) {
-    return 16;
-  }
-  if (tile == static_cast<int>(TileId::Planks)) {
-    return 4;
-  }
-  if (tile == static_cast<int>(TileId::CoalOre)) {
-    return 34;
-  }
-  if (tile == static_cast<int>(TileId::IronOre)) {
-    return 33;
-  }
-  if (tile == static_cast<int>(TileId::GoldOre)) {
-    return 32;
-  }
-  if (tile == static_cast<int>(TileId::DiamondOre)) {
-    return 50;
-  }
-  if (tile == static_cast<int>(TileId::Clay)) {
-    return 72;
-  }
-  if (tile == static_cast<int>(TileId::Water)) {
-    return 205;
-  }
-  if (tile == static_cast<int>(TileId::Sand)) {
-    return 18;
-  }
-  if (tile == static_cast<int>(TileId::Bedrock)) {
-    return 17;
-  }
-  if (tile == static_cast<int>(TileId::Wood)) {
-    return (face == Face::Top || face == Face::Bottom) ? 21 : 20;
-  }
-  if (tile == static_cast<int>(TileId::SpruceWood)) {
-    return (face == Face::Top || face == Face::Bottom) ? 21 : 116;
-  }
-  if (tile == static_cast<int>(TileId::BirchWood)) {
-    return (face == Face::Top || face == Face::Bottom) ? 21 : 117;
-  }
-  if (tile == static_cast<int>(TileId::Leaves)) {
-    // PS3 non-fancy style uses the solid leaf tile to avoid alpha-sorted artifacts.
-    return 53;
-  }
-  if (tile == static_cast<int>(TileId::SpruceLeaves)) {
-    return 132;
-  }
-  if (tile == static_cast<int>(TileId::BirchLeaves)) {
-    return 133;
-  }
-  if (tile == static_cast<int>(TileId::TallGrass)) {
-    return 39;
-  }
-  if (tile == static_cast<int>(TileId::Fern)) {
-    return 56;
-  }
-  if (tile == static_cast<int>(TileId::DeadBush)) {
-    return 55;
-  }
-  if (tile == static_cast<int>(TileId::FlowerYellow)) {
-    return 13;
-  }
-  if (tile == static_cast<int>(TileId::FlowerRed)) {
-    return 12;
-  }
-  if (tile == static_cast<int>(TileId::MushroomBrown)) {
-    return 29;
-  }
-  if (tile == static_cast<int>(TileId::MushroomRed)) {
-    return 28;
-  }
-  if (tile == static_cast<int>(TileId::SugarCane)) {
-    return 73;
-  }
-  if (tile == static_cast<int>(TileId::Stone)) {
-    return 1;
-  }
-  if (tile == static_cast<int>(TileId::Dirt)) {
-    return 2;
-  }
-  if (tile == static_cast<int>(TileId::Grass)) {
-    if (face == Face::Top) {
-      return 0;
-    }
-    if (face == Face::Bottom) {
-      return 2;
-    }
-    return 3;
-  }
-  return 1;
-}
-
 void LevelRenderer::buildChunkMesh(int chunkX, int chunkZ, std::vector<TerrainVertex>& opaqueOut, std::vector<TerrainVertex>& transparentOut) {
   using detail::ChunkBuildView;
-  using detail::FaceDir;
   using detail::FloraMesher;
   using detail::OpaqueGreedyMesher;
   using detail::TransparentMesher;
@@ -606,61 +457,50 @@ void LevelRenderer::buildChunkMesh(int chunkX, int chunkZ, std::vector<TerrainVe
       .x0 = chunkX * 16,
       .z0 = chunkZ * 16,
   };
-  auto mapFace = [](FaceDir face) {
-    switch (face) {
-      case FaceDir::Top: return Face::Top;
-      case FaceDir::Bottom: return Face::Bottom;
-      case FaceDir::North: return Face::North;
-      case FaceDir::South: return Face::South;
-      case FaceDir::West: return Face::West;
-      case FaceDir::East: return Face::East;
-    }
-    return Face::Top;
+  auto textureForFace = [&](int tile, render::BlockFace face) {
+    return render::textureForTileFace(tile, face);
   };
-  auto textureForFace = [&](int tile, FaceDir face) {
-    return textureForTileFace(tile, mapFace(face));
-  };
-  auto emitTransparentFace = [&](std::vector<TerrainVertex>& out, int worldX, int y, int worldZ, FaceDir face, int textureIndex, float shade,
+  auto emitTransparentFace = [&](std::vector<TerrainVertex>& out, int worldX, int y, int worldZ, render::BlockFace face, int textureIndex, float shade,
                                  int tile) {
     const int lx = worldX - view.x0;
     const int lz = worldZ - view.z0;
     const bool waterHasSameAbove =
         (tile == static_cast<int>(TileId::Water)) && (view.tileAt(lx, y + 1, lz) == static_cast<int>(TileId::Water));
-    appendFace(out, static_cast<float>(worldX), static_cast<float>(y), static_cast<float>(worldZ), mapFace(face), textureIndex, shade, tile,
-               0.0f, true, waterHasSameAbove);
+    appendFace(out, static_cast<float>(worldX), static_cast<float>(y), static_cast<float>(worldZ), face, textureIndex, shade, tile, 0.0f, true,
+               waterHasSameAbove);
   };
-  auto emitOpaqueRect = [&](std::vector<TerrainVertex>& out, FaceDir face, int tile, int tex, float shade, int worldX, int y, int worldZ,
+  auto emitOpaqueRect = [&](std::vector<TerrainVertex>& out, render::BlockFace face, int tile, int tex, float shade, int worldX, int y, int worldZ,
                             int w, int h) {
     const float x = static_cast<float>(worldX);
     const float fy = static_cast<float>(y);
     const float z = static_cast<float>(worldZ);
-    const simd_float3 tint = detail::biomeTintForBlock(tile, worldX, worldZ, face == FaceDir::Top);
+    const simd_float3 tint = detail::biomeTintForBlock(tile, worldX, worldZ, face == render::BlockFace::Top);
     const simd_float3 color = {tint.x * shade, tint.y * shade, tint.z * shade};
     TerrainVertex v0{};
     TerrainVertex v1{};
     TerrainVertex v2{};
     TerrainVertex v3{};
-    if (face == FaceDir::Top) {
+    if (face == render::BlockFace::Top) {
       v0.position = {x, fy + 1.0f, z};
       v1.position = {x + static_cast<float>(w), fy + 1.0f, z};
       v2.position = {x + static_cast<float>(w), fy + 1.0f, z + static_cast<float>(h)};
       v3.position = {x, fy + 1.0f, z + static_cast<float>(h)};
-    } else if (face == FaceDir::Bottom) {
+    } else if (face == render::BlockFace::Bottom) {
       v0.position = {x, fy, z + static_cast<float>(h)};
       v1.position = {x + static_cast<float>(w), fy, z + static_cast<float>(h)};
       v2.position = {x + static_cast<float>(w), fy, z};
       v3.position = {x, fy, z};
-    } else if (face == FaceDir::North) {
+    } else if (face == render::BlockFace::North) {
       v0.position = {x + static_cast<float>(w), fy, z};
       v1.position = {x + static_cast<float>(w), fy + static_cast<float>(h), z};
       v2.position = {x, fy + static_cast<float>(h), z};
       v3.position = {x, fy, z};
-    } else if (face == FaceDir::South) {
+    } else if (face == render::BlockFace::South) {
       v0.position = {x, fy, z + 1.0f};
       v1.position = {x, fy + static_cast<float>(h), z + 1.0f};
       v2.position = {x + static_cast<float>(w), fy + static_cast<float>(h), z + 1.0f};
       v3.position = {x + static_cast<float>(w), fy, z + 1.0f};
-    } else if (face == FaceDir::West) {
+    } else if (face == render::BlockFace::West) {
       v0.position = {x, fy, z};
       v1.position = {x, fy + static_cast<float>(h), z};
       v2.position = {x, fy + static_cast<float>(h), z + static_cast<float>(w)};
@@ -675,7 +515,7 @@ void LevelRenderer::buildChunkMesh(int chunkX, int chunkZ, std::vector<TerrainVe
     v1.color = color;
     v2.color = color;
     v3.color = color;
-    if (face == FaceDir::Top || face == FaceDir::Bottom) {
+    if (face == render::BlockFace::Top || face == render::BlockFace::Bottom) {
       v0.uv = {0.0f, static_cast<float>(h)};
       v1.uv = {static_cast<float>(w), static_cast<float>(h)};
       v2.uv = {static_cast<float>(w), 0.0f};
@@ -700,27 +540,31 @@ void LevelRenderer::buildChunkMesh(int chunkX, int chunkZ, std::vector<TerrainVe
   };
   auto emitCactusFaces = [&](int lx, int y, int lz, int worldX, int worldZ, int tile) {
     struct FaceRule {
-      Face renderFace;
-      FaceDir texFace;
+      render::BlockFace face;
       int neighborTile;
       float shade;
       bool skip = false;
     };
     const std::array<FaceRule, 6> rules = {{
-        {Face::Top, FaceDir::Top, view.tileAt(lx, y + 1, lz), 1.0f, false},
-        {Face::Bottom, FaceDir::Bottom, view.tileAt(lx, y - 1, lz), 0.55f,
+        {render::BlockFace::Top, view.tileAt(lx, y + 1, lz), 1.0f, false},
+        {render::BlockFace::Bottom, view.tileAt(lx, y - 1, lz), 0.55f,
          (tile == static_cast<int>(TileId::Bedrock) && y == Level::minBuildHeight)},
-        {Face::North, FaceDir::North, view.tileAt(lx, y, lz - 1), 0.78f, false},
-        {Face::South, FaceDir::South, view.tileAt(lx, y, lz + 1), 0.72f, false},
-        {Face::West, FaceDir::West, view.tileAt(lx - 1, y, lz), 0.84f, false},
-        {Face::East, FaceDir::East, view.tileAt(lx + 1, y, lz), 0.88f, false},
+        {render::BlockFace::North, view.tileAt(lx, y, lz - 1), 0.78f, false},
+        {render::BlockFace::South, view.tileAt(lx, y, lz + 1), 0.72f, false},
+        {render::BlockFace::West, view.tileAt(lx - 1, y, lz), 0.84f, false},
+        {render::BlockFace::East, view.tileAt(lx + 1, y, lz), 0.88f, false},
     }};
     for (const FaceRule& rule : rules) {
-      if (rule.skip || !detail::shouldRenderFaceForTile(tile, rule.neighborTile)) {
+      if (rule.skip) {
         continue;
       }
-      appendFace(opaqueOut, static_cast<float>(worldX), static_cast<float>(y), static_cast<float>(worldZ), rule.renderFace,
-                 textureForFace(tile, rule.texFace), rule.shade, tile);
+      const bool isSideFace = (rule.face == render::BlockFace::North || rule.face == render::BlockFace::South ||
+                               rule.face == render::BlockFace::West || rule.face == render::BlockFace::East);
+      if (!isSideFace && !detail::shouldRenderFaceForTile(tile, rule.neighborTile)) {
+        continue;
+      }
+      appendFace(opaqueOut, static_cast<float>(worldX), static_cast<float>(y), static_cast<float>(worldZ), rule.face,
+                 textureForFace(tile, rule.face), rule.shade, tile);
     }
   };
 
@@ -752,8 +596,8 @@ void LevelRenderer::composeTerrainMesh() {
   std::vector<std::int64_t> drawList;
   drawList.reserve(visibleChunks_.size());
   for (const std::int64_t key : visibleChunks_) {
-    const int chunkX = static_cast<int>(key >> 32);
-    const int chunkZ = static_cast<int>(static_cast<std::int32_t>(key & 0xffffffff));
+    const int chunkX = chunkXFromKey(key);
+    const int chunkZ = chunkZFromKey(key);
     if (!chunkVisibleInFrustum(chunkX, chunkZ)) {
       continue;
     }
@@ -787,8 +631,7 @@ void LevelRenderer::refreshVisibleChunks() {
     }
   }
 
-  // Keep built chunk meshes cached even when currently out of view so moving
-  // back does not trigger expensive re-meshing and visible popping.
+  // Keep built chunk meshes cached outside the active visible set.
 }
 
 bool LevelRenderer::chunkVisibleInFrustum(int chunkX, int chunkZ) const {
@@ -815,7 +658,14 @@ bool LevelRenderer::chunkVisibleInFrustum(int chunkX, int chunkZ) const {
 }
 
 void LevelRenderer::markChunkDirty(int chunkX, int chunkZ) {
-  dirtyChunks_.insert(chunkKey(chunkX, chunkZ));
+  insertDirtyChunk(chunkKey(chunkX, chunkZ), false);
+}
+
+void LevelRenderer::insertDirtyChunk(std::int64_t key, bool urgent) {
+  dirtyChunks_.insert(key);
+  if (urgent) {
+    urgentDirtyChunks_.insert(key);
+  }
 }
 
 void LevelRenderer::markChunkAndNeighborsDirty(int chunkX, int chunkZ, bool urgent, bool includeCenter) {
@@ -825,89 +675,40 @@ void LevelRenderer::markChunkAndNeighborsDirty(int chunkX, int chunkZ, bool urge
   const std::int64_t north = chunkKey(chunkX, chunkZ - 1);
   const std::int64_t south = chunkKey(chunkX, chunkZ + 1);
   if (includeCenter) {
-    dirtyChunks_.insert(center);
+    insertDirtyChunk(center, urgent);
   }
-  dirtyChunks_.insert(west);
-  dirtyChunks_.insert(east);
-  dirtyChunks_.insert(north);
-  dirtyChunks_.insert(south);
-  if (!urgent) {
-    return;
-  }
-  // Prioritize directly edited chunks to avoid one-frame border holes when a
-  // block on a chunk seam is mined or placed.
-  if (includeCenter) {
-    urgentDirtyChunks_.insert(center);
-  }
-  urgentDirtyChunks_.insert(west);
-  urgentDirtyChunks_.insert(east);
-  urgentDirtyChunks_.insert(north);
-  urgentDirtyChunks_.insert(south);
+  insertDirtyChunk(west, urgent);
+  insertDirtyChunk(east, urgent);
+  insertDirtyChunk(north, urgent);
+  insertDirtyChunk(south, urgent);
 }
 
 void LevelRenderer::appendOverlayCube(int x, int y, int z, int textureIndex, float inflate) {
   const float fx = static_cast<float>(x);
   const float fy = static_cast<float>(y);
   const float fz = static_cast<float>(z);
-  appendFace(overlayVertices_, fx, fy, fz, Face::Top, textureIndex, 1.0f, -1, inflate, true);
-  appendFace(overlayVertices_, fx, fy, fz, Face::Bottom, textureIndex, 1.0f, -1, inflate, true);
-  appendFace(overlayVertices_, fx, fy, fz, Face::North, textureIndex, 1.0f, -1, inflate, true);
-  appendFace(overlayVertices_, fx, fy, fz, Face::South, textureIndex, 1.0f, -1, inflate, true);
-  appendFace(overlayVertices_, fx, fy, fz, Face::West, textureIndex, 1.0f, -1, inflate, true);
-  appendFace(overlayVertices_, fx, fy, fz, Face::East, textureIndex, 1.0f, -1, inflate, true);
+  appendFace(overlayVertices_, fx, fy, fz, render::BlockFace::Top, textureIndex, 1.0f, -1, inflate, true);
+  appendFace(overlayVertices_, fx, fy, fz, render::BlockFace::Bottom, textureIndex, 1.0f, -1, inflate, true);
+  appendFace(overlayVertices_, fx, fy, fz, render::BlockFace::North, textureIndex, 1.0f, -1, inflate, true);
+  appendFace(overlayVertices_, fx, fy, fz, render::BlockFace::South, textureIndex, 1.0f, -1, inflate, true);
+  appendFace(overlayVertices_, fx, fy, fz, render::BlockFace::West, textureIndex, 1.0f, -1, inflate, true);
+  appendFace(overlayVertices_, fx, fy, fz, render::BlockFace::East, textureIndex, 1.0f, -1, inflate, true);
 }
 
-void LevelRenderer::appendFace(std::vector<TerrainVertex>& out, float x, float y, float z, Face face, int textureIndex, float shade,
+void LevelRenderer::appendFace(std::vector<TerrainVertex>& out, float x, float y, float z, render::BlockFace face, int textureIndex, float shade,
                                int tile, float inflate, bool stabilizeUvEdges, bool waterHasSameAbove) {
-  const bool allowGrassTint = (face == Face::Top);
+  const bool allowGrassTint = (face == render::BlockFace::Top);
   const simd_float3 tint = detail::biomeTintForBlock(tile, static_cast<int>(x), static_cast<int>(z), allowGrassTint);
   const simd_float3 baseColor = {tint.x * shade, tint.y * shade, tint.z * shade};
   const simd_float3 color = applyCactusCutoutTint(tile, baseColor);
-  const FaceBounds bounds = computeFaceBounds(tile, static_cast<int>(face), x, y, z, inflate, waterHasSameAbove);
+  const render::FaceBounds bounds = render::computeFaceBounds(tile, face, x, y, z, inflate, waterHasSameAbove);
 
   TerrainVertex v0{};
   TerrainVertex v1{};
   TerrainVertex v2{};
   TerrainVertex v3{};
 
-  switch (face) {
-    case Face::Top:
-      v0.position = {bounds.topX0, bounds.maxY, bounds.topZ0};
-      v1.position = {bounds.topX1, bounds.maxY, bounds.topZ0};
-      v2.position = {bounds.topX1, bounds.maxY, bounds.topZ1};
-      v3.position = {bounds.topX0, bounds.maxY, bounds.topZ1};
-      break;
-    case Face::Bottom:
-      v0.position = {bounds.topX0, bounds.minY, bounds.topZ1};
-      v1.position = {bounds.topX1, bounds.minY, bounds.topZ1};
-      v2.position = {bounds.topX1, bounds.minY, bounds.topZ0};
-      v3.position = {bounds.topX0, bounds.minY, bounds.topZ0};
-      break;
-    case Face::North:
-      v0.position = {bounds.sideX1, bounds.minY, bounds.northZ};
-      v1.position = {bounds.sideX1, bounds.maxY, bounds.northZ};
-      v2.position = {bounds.sideX0, bounds.maxY, bounds.northZ};
-      v3.position = {bounds.sideX0, bounds.minY, bounds.northZ};
-      break;
-    case Face::South:
-      v0.position = {bounds.sideX0, bounds.minY, bounds.southZ};
-      v1.position = {bounds.sideX0, bounds.maxY, bounds.southZ};
-      v2.position = {bounds.sideX1, bounds.maxY, bounds.southZ};
-      v3.position = {bounds.sideX1, bounds.minY, bounds.southZ};
-      break;
-    case Face::West:
-      v0.position = {bounds.westX, bounds.minY, bounds.sideZ0};
-      v1.position = {bounds.westX, bounds.maxY, bounds.sideZ0};
-      v2.position = {bounds.westX, bounds.maxY, bounds.sideZ1};
-      v3.position = {bounds.westX, bounds.minY, bounds.sideZ1};
-      break;
-    case Face::East:
-      v0.position = {bounds.eastX, bounds.minY, bounds.sideZ1};
-      v1.position = {bounds.eastX, bounds.maxY, bounds.sideZ1};
-      v2.position = {bounds.eastX, bounds.maxY, bounds.sideZ0};
-      v3.position = {bounds.eastX, bounds.minY, bounds.sideZ0};
-      break;
-  }
+  setFacePositions(face, bounds, v0, v1, v2, v3);
 
   v0.color = color;
   v1.color = color;
@@ -916,47 +717,10 @@ void LevelRenderer::appendFace(std::vector<TerrainVertex>& out, float x, float y
 
   const float u0 = 0.0f;
   const float v0uv = 0.0f;
-  const float u1 = stabilizeUvEdges ? 0.9995f : 1.0f;
-  const float v1uv = stabilizeUvEdges ? 0.9995f : 1.0f;
+  const float u1 = stabilizeUvEdges ? 0.99999f : 1.0f;
+  const float v1uv = stabilizeUvEdges ? 0.99999f : 1.0f;
 
-  switch (face) {
-    case Face::Top:
-      v0.uv = {u0, v1uv};
-      v1.uv = {u1, v1uv};
-      v2.uv = {u1, v0uv};
-      v3.uv = {u0, v0uv};
-      break;
-    case Face::Bottom:
-      v0.uv = {u0, v1uv};
-      v1.uv = {u1, v1uv};
-      v2.uv = {u1, v0uv};
-      v3.uv = {u0, v0uv};
-      break;
-    case Face::North:
-      v0.uv = {u1, v1uv};
-      v1.uv = {u1, v0uv};
-      v2.uv = {u0, v0uv};
-      v3.uv = {u0, v1uv};
-      break;
-    case Face::South:
-      v0.uv = {u0, v1uv};
-      v1.uv = {u0, v0uv};
-      v2.uv = {u1, v0uv};
-      v3.uv = {u1, v1uv};
-      break;
-    case Face::West:
-      v0.uv = {u0, v1uv};
-      v1.uv = {u0, v0uv};
-      v2.uv = {u1, v0uv};
-      v3.uv = {u1, v1uv};
-      break;
-    case Face::East:
-      v0.uv = {u0, v1uv};
-      v1.uv = {u0, v0uv};
-      v2.uv = {u1, v0uv};
-      v3.uv = {u1, v1uv};
-      break;
-  }
+  setFaceUv(face, u0, v0uv, u1, v1uv, v0, v1, v2, v3);
 
   const simd_float2 tileOrigin = detail::atlasTileOrigin(textureIndex);
   v0.tileOrigin = tileOrigin;
@@ -1019,9 +783,12 @@ BreakingParticles::SpawnContext LevelRenderer::makeBreakParticleSpawnContext(int
   ctx.y = y;
   ctx.z = z;
   ctx.tile = tile;
-  const std::array<Face, 6> faces = {Face::Top, Face::Bottom, Face::North, Face::South, Face::West, Face::East};
+  const std::array<render::BlockFace, 6> faces = {
+      render::BlockFace::Top, render::BlockFace::Bottom, render::BlockFace::North,
+      render::BlockFace::South, render::BlockFace::West,  render::BlockFace::East,
+  };
   for (std::size_t i = 0; i < faces.size(); ++i) {
-    ctx.faceTextures[i] = textureForTileFace(tile, faces[i]);
+    ctx.faceTextures[i] = render::textureForTileFace(tile, faces[i]);
     ctx.faceTints[i] = breakParticleTintForFace(tile, x, z, static_cast<int>(faces[i]));
   }
   return ctx;

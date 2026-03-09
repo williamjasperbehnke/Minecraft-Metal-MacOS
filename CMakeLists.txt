@@ -51,6 +51,7 @@ set(SRC
   src/Client/App/AppInputState.mm
   src/Client/App/AppWorldRenderer.mm
   src/Client/App/CrosshairView.mm
+  src/Client/App/InventoryView.mm
   src/Client/App/DebugHudController.mm
   src/Client/App/DebugHudFormatter.cpp
   src/Client/App/MetalRendererBridge.mm
@@ -58,12 +59,10 @@ set(SRC
   src/Client/Core/BlockInteractionController.cpp
   src/Client/Core/Minecraft.cpp
   src/Client/Core/PlayerController.cpp
+  src/Client/Inventory/Inventory.cpp
   src/Client/Debug/ChunkBorderOverlay.cpp
   src/Client/Debug/RenderDebugController.cpp
   src/Client/GameMode/GameMode.cpp
-  src/Client/GameMode/CreativeGameMode.cpp
-  src/Client/GameMode/SpectatorGameMode.cpp
-  src/Client/GameMode/SurvivalGameMode.cpp
   src/Client/Render/Particles/BreakingParticles.cpp
   src/Client/Render/Metal/MetalRenderer.mm
   src/Client/Render/Metal/LevelRenderer.cpp

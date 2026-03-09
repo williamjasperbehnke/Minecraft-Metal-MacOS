@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "Client/Core/Minecraft.h"
 #include "World/Entity/Player.h"
 #include "World/Level/Level.h"
 #include "World/Tile/Tile.h"
@@ -79,6 +80,34 @@ bool GameMode::blocksPlayerPlacement(int x, int y, int z) const {
 
 bool GameMode::canDestroyTile(int tile) const {
   return tile != static_cast<int>(TileId::Water) && tile != static_cast<int>(TileId::Bedrock);
+}
+
+bool GameMode::destroyBlockAt(int x, int y, int z) {
+  if (!hasLevelAndPlayer() || !withinBlockReach(x, y, z)) {
+    return false;
+  }
+
+  const int tile = level_->getTile(x, y, z);
+  if (!canDestroyTile(tile)) {
+    return false;
+  }
+  return level_->setTile(x, y, z, static_cast<int>(TileId::Air));
+}
+
+bool GameMode::placeBlockAt(int x, int y, int z) {
+  if (!hasLevelAndPlayer() || !withinBlockReach(x, y, z) || !inBuildHeight(y)) {
+    return false;
+  }
+
+  const int existing = level_->getTile(x, y, z);
+  if (!canReplaceForPlacement(existing) || blocksPlayerPlacement(x, y, z)) {
+    return false;
+  }
+  return level_->setTile(x, y, z, placeTile());
+}
+
+int GameMode::placeTile() const {
+  return minecraft_ ? minecraft_->selectedPlaceTile() : static_cast<int>(TileId::Grass);
 }
 
 }  // namespace mc

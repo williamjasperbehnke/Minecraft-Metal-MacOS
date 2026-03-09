@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <vector>
 
+#include "Client/Render/BlockRender.h"
 #include "Client/Render/Metal/MetalRenderer.h"
 #include "World/Chunk/LevelChunk.h"
 #include "World/Level/Level.h"
@@ -16,37 +17,21 @@ constexpr int kChunkSide = 16;
 constexpr int kChunkArea = kChunkSide * kChunkSide;
 constexpr int kTileUnknown = -1;
 
-enum class FaceDir : int {
-  Top = 0,
-  Bottom = 1,
-  North = 2,
-  South = 3,
-  West = 4,
-  East = 5,
-};
-
 inline bool isTransparentTile(int tile) {
   return tile == static_cast<int>(TileId::Water) || tile == static_cast<int>(TileId::Glass) ||
-         tile == static_cast<int>(TileId::Ice) ||
-         tile == static_cast<int>(TileId::TallGrass) || tile == static_cast<int>(TileId::Fern) ||
-         tile == static_cast<int>(TileId::DeadBush) || tile == static_cast<int>(TileId::FlowerYellow) ||
-         tile == static_cast<int>(TileId::FlowerRed) || tile == static_cast<int>(TileId::MushroomBrown) ||
-         tile == static_cast<int>(TileId::MushroomRed) || tile == static_cast<int>(TileId::SugarCane);
+         tile == static_cast<int>(TileId::Ice) || render::isPlantRenderTile(tile);
 }
 
 inline bool isPlantTile(int tile) {
-  return tile == static_cast<int>(TileId::TallGrass) || tile == static_cast<int>(TileId::Fern) ||
-         tile == static_cast<int>(TileId::DeadBush) || tile == static_cast<int>(TileId::FlowerYellow) ||
-         tile == static_cast<int>(TileId::FlowerRed) || tile == static_cast<int>(TileId::MushroomBrown) ||
-         tile == static_cast<int>(TileId::MushroomRed) || tile == static_cast<int>(TileId::SugarCane);
+  return render::isPlantRenderTile(tile);
 }
 
 inline bool isCactusTile(int tile) {
-  return tile == static_cast<int>(TileId::Cactus);
+  return render::isCactusRenderTile(tile);
 }
 
 inline bool isNonOccludingTileForFaceCulling(int tile) {
-  return isTransparentTile(tile) || isPlantTile(tile) || isCactusTile(tile);
+  return isTransparentTile(tile) || isCactusTile(tile);
 }
 
 inline bool shouldRenderFaceForTile(int tile, int neighborTile) {
@@ -58,10 +43,8 @@ inline bool shouldRenderFaceForTile(int tile, int neighborTile) {
     return true;
   }
 
-  // Water should behave like a connected volume and avoid emitting
-  // internal faces against non-occluding neighbors (flora/cactus/glass/etc.),
-  // which can appear as interior seam lines.
-  if (tile == static_cast<int>(TileId::Water) && isNonOccludingTileForFaceCulling(neighborTile)) {
+  // Water should avoid internal faces only against water itself.
+  if (tile == static_cast<int>(TileId::Water) && neighborTile == static_cast<int>(TileId::Water)) {
     return false;
   }
 
@@ -85,15 +68,7 @@ inline simd_float2 atlasTileOrigin(int textureIndex) {
 }
 
 inline simd_float3 biomeTintForBlock(int tile, int /*x*/, int /*z*/, bool allowGrassTint) {
-  if (tile != static_cast<int>(TileId::Grass) && tile != static_cast<int>(TileId::Leaves) &&
-      tile != static_cast<int>(TileId::SpruceLeaves) && tile != static_cast<int>(TileId::BirchLeaves) &&
-      tile != static_cast<int>(TileId::TallGrass) && tile != static_cast<int>(TileId::Fern)) {
-    return {1.0f, 1.0f, 1.0f};
-  }
-  if (tile == static_cast<int>(TileId::Grass) && !allowGrassTint) {
-    return {1.0f, 1.0f, 1.0f};
-  }
-  return {0.42f, 0.72f, 0.29f};
+  return render::biomeTintForBlock(tile, allowGrassTint);
 }
 
 struct ChunkBuildView {
@@ -154,7 +129,7 @@ private:
     const float fx = static_cast<float>(worldX);
     const float fy = static_cast<float>(y);
     const float fz = static_cast<float>(worldZ);
-    const int tex = textureForFace(tile, FaceDir::North);
+    const int tex = textureForFace(tile, render::BlockFace::North);
     const simd_float2 tileOrigin = atlasTileOrigin(tex);
     const simd_float3 tint = biomeTintForBlock(tile, worldX, worldZ, true);
     const simd_float3 color = {-tint.x, tint.y, tint.z};
@@ -208,6 +183,15 @@ public:
   template <typename TextureLookupFn, typename EmitFaceFn>
   void build(const ChunkBuildView& view, std::vector<TerrainVertex>& transparentOut, TextureLookupFn&& textureForFace,
              EmitFaceFn&& emitFace) const {
+    // Draw water first, then other transparent geometry so glass/leaves overlay water.
+    buildPass(view, transparentOut, textureForFace, emitFace, true);
+    buildPass(view, transparentOut, textureForFace, emitFace, false);
+  }
+
+private:
+  template <typename TextureLookupFn, typename EmitFaceFn>
+  static void buildPass(const ChunkBuildView& view, std::vector<TerrainVertex>& transparentOut, TextureLookupFn&& textureForFace,
+                        EmitFaceFn&& emitFace, bool waterPass) {
     for (int lx = 0; lx < kChunkSide; ++lx) {
       for (int lz = 0; lz < kChunkSide; ++lz) {
         const int worldX = view.x0 + lx;
@@ -217,24 +201,28 @@ public:
           if (!isTransparentTile(tile) || isPlantTile(tile)) {
             continue;
           }
+          const bool isWater = (tile == static_cast<int>(TileId::Water));
+          if (waterPass != isWater) {
+            continue;
+          }
           if (shouldRenderFaceForTile(tile, view.tileAt(lx, y + 1, lz))) {
-            emitFace(transparentOut, worldX, y, worldZ, FaceDir::Top, textureForFace(tile, FaceDir::Top), 1.0f, tile);
+            emitFace(transparentOut, worldX, y, worldZ, render::BlockFace::Top, textureForFace(tile, render::BlockFace::Top), 1.0f, tile);
           }
           if (!(tile == static_cast<int>(TileId::Bedrock) && y == Level::minBuildHeight) &&
               shouldRenderFaceForTile(tile, view.tileAt(lx, y - 1, lz))) {
-            emitFace(transparentOut, worldX, y, worldZ, FaceDir::Bottom, textureForFace(tile, FaceDir::Bottom), 0.55f, tile);
+            emitFace(transparentOut, worldX, y, worldZ, render::BlockFace::Bottom, textureForFace(tile, render::BlockFace::Bottom), 0.55f, tile);
           }
           if (shouldRenderFaceForTile(tile, view.tileAt(lx, y, lz - 1))) {
-            emitFace(transparentOut, worldX, y, worldZ, FaceDir::North, textureForFace(tile, FaceDir::North), 0.78f, tile);
+            emitFace(transparentOut, worldX, y, worldZ, render::BlockFace::North, textureForFace(tile, render::BlockFace::North), 0.78f, tile);
           }
           if (shouldRenderFaceForTile(tile, view.tileAt(lx, y, lz + 1))) {
-            emitFace(transparentOut, worldX, y, worldZ, FaceDir::South, textureForFace(tile, FaceDir::South), 0.72f, tile);
+            emitFace(transparentOut, worldX, y, worldZ, render::BlockFace::South, textureForFace(tile, render::BlockFace::South), 0.72f, tile);
           }
           if (shouldRenderFaceForTile(tile, view.tileAt(lx - 1, y, lz))) {
-            emitFace(transparentOut, worldX, y, worldZ, FaceDir::West, textureForFace(tile, FaceDir::West), 0.84f, tile);
+            emitFace(transparentOut, worldX, y, worldZ, render::BlockFace::West, textureForFace(tile, render::BlockFace::West), 0.84f, tile);
           }
           if (shouldRenderFaceForTile(tile, view.tileAt(lx + 1, y, lz))) {
-            emitFace(transparentOut, worldX, y, worldZ, FaceDir::East, textureForFace(tile, FaceDir::East), 0.88f, tile);
+            emitFace(transparentOut, worldX, y, worldZ, render::BlockFace::East, textureForFace(tile, render::BlockFace::East), 0.88f, tile);
           }
         }
       }
@@ -259,11 +247,11 @@ public:
           const int tile = view.center->getTile(lx, y, lz);
           const int n = view.tileAt(lx, y + 1, lz);
           mask[lx + lz * kChunkSide] =
-              (isOpaqueTile(tile) && shouldRenderFaceForTile(tile, n)) ? MaskCell{tile, textureForFace(tile, FaceDir::Top)} : MaskCell{};
+              (isOpaqueTile(tile) && shouldRenderFaceForTile(tile, n)) ? MaskCell{tile, textureForFace(tile, render::BlockFace::Top)} : MaskCell{};
         }
       }
       greedyEmit(mask, kChunkSide, kChunkSide, [&](int i, int j, int w, int h, int tile, int tex) {
-        emitRect(opaqueOut, FaceDir::Top, tile, tex, 1.0f, view.x0 + i, y, view.z0 + j, w, h);
+        emitRect(opaqueOut, render::BlockFace::Top, tile, tex, 1.0f, view.x0 + i, y, view.z0 + j, w, h);
       });
     }
 
@@ -275,12 +263,12 @@ public:
           mask[lx + lz * kChunkSide] =
               (isOpaqueTile(tile) && !(tile == static_cast<int>(TileId::Bedrock) && y == Level::minBuildHeight) &&
                shouldRenderFaceForTile(tile, n))
-                  ? MaskCell{tile, textureForFace(tile, FaceDir::Bottom)}
+                  ? MaskCell{tile, textureForFace(tile, render::BlockFace::Bottom)}
                   : MaskCell{};
         }
       }
       greedyEmit(mask, kChunkSide, kChunkSide, [&](int i, int j, int w, int h, int tile, int tex) {
-        emitRect(opaqueOut, FaceDir::Bottom, tile, tex, 0.55f, view.x0 + i, y, view.z0 + j, w, h);
+        emitRect(opaqueOut, render::BlockFace::Bottom, tile, tex, 0.55f, view.x0 + i, y, view.z0 + j, w, h);
       });
     }
 
@@ -292,12 +280,12 @@ public:
           const int tile = view.center->getTile(lx, y, lz);
           const int nn = view.tileAt(lx, y, lz - 1);
           sideMask[lx + (y - Level::minBuildHeight) * 16] =
-              (isOpaqueTile(tile) && shouldRenderFaceForTile(tile, nn)) ? MaskCell{tile, textureForFace(tile, FaceDir::North)}
+              (isOpaqueTile(tile) && shouldRenderFaceForTile(tile, nn)) ? MaskCell{tile, textureForFace(tile, render::BlockFace::North)}
                                                                          : MaskCell{};
         }
       }
       greedyEmit(sideMask, 16, ySpan, [&](int i, int j, int w, int h, int tile, int tex) {
-        emitRect(opaqueOut, FaceDir::North, tile, tex, 0.78f, view.x0 + i, j + Level::minBuildHeight, view.z0 + lz, w, h);
+        emitRect(opaqueOut, render::BlockFace::North, tile, tex, 0.78f, view.x0 + i, j + Level::minBuildHeight, view.z0 + lz, w, h);
       });
 
       for (int y = Level::minBuildHeight; y < Level::maxBuildHeight; ++y) {
@@ -305,12 +293,12 @@ public:
           const int tile = view.center->getTile(lx, y, lz);
           const int ns = view.tileAt(lx, y, lz + 1);
           sideMask[lx + (y - Level::minBuildHeight) * 16] =
-              (isOpaqueTile(tile) && shouldRenderFaceForTile(tile, ns)) ? MaskCell{tile, textureForFace(tile, FaceDir::South)}
+              (isOpaqueTile(tile) && shouldRenderFaceForTile(tile, ns)) ? MaskCell{tile, textureForFace(tile, render::BlockFace::South)}
                                                                          : MaskCell{};
         }
       }
       greedyEmit(sideMask, 16, ySpan, [&](int i, int j, int w, int h, int tile, int tex) {
-        emitRect(opaqueOut, FaceDir::South, tile, tex, 0.72f, view.x0 + i, j + Level::minBuildHeight, view.z0 + lz, w, h);
+        emitRect(opaqueOut, render::BlockFace::South, tile, tex, 0.72f, view.x0 + i, j + Level::minBuildHeight, view.z0 + lz, w, h);
       });
     }
 
@@ -320,12 +308,12 @@ public:
           const int tile = view.center->getTile(lx, y, lz);
           const int nw = view.tileAt(lx - 1, y, lz);
           sideMask[lz + (y - Level::minBuildHeight) * 16] =
-              (isOpaqueTile(tile) && shouldRenderFaceForTile(tile, nw)) ? MaskCell{tile, textureForFace(tile, FaceDir::West)}
+              (isOpaqueTile(tile) && shouldRenderFaceForTile(tile, nw)) ? MaskCell{tile, textureForFace(tile, render::BlockFace::West)}
                                                                          : MaskCell{};
         }
       }
       greedyEmit(sideMask, 16, ySpan, [&](int i, int j, int w, int h, int tile, int tex) {
-        emitRect(opaqueOut, FaceDir::West, tile, tex, 0.84f, view.x0 + lx, j + Level::minBuildHeight, view.z0 + i, w, h);
+        emitRect(opaqueOut, render::BlockFace::West, tile, tex, 0.84f, view.x0 + lx, j + Level::minBuildHeight, view.z0 + i, w, h);
       });
 
       for (int y = Level::minBuildHeight; y < Level::maxBuildHeight; ++y) {
@@ -333,12 +321,12 @@ public:
           const int tile = view.center->getTile(lx, y, lz);
           const int ne = view.tileAt(lx + 1, y, lz);
           sideMask[lz + (y - Level::minBuildHeight) * 16] =
-              (isOpaqueTile(tile) && shouldRenderFaceForTile(tile, ne)) ? MaskCell{tile, textureForFace(tile, FaceDir::East)}
+              (isOpaqueTile(tile) && shouldRenderFaceForTile(tile, ne)) ? MaskCell{tile, textureForFace(tile, render::BlockFace::East)}
                                                                          : MaskCell{};
         }
       }
       greedyEmit(sideMask, 16, ySpan, [&](int i, int j, int w, int h, int tile, int tex) {
-        emitRect(opaqueOut, FaceDir::East, tile, tex, 0.88f, view.x0 + lx, j + Level::minBuildHeight, view.z0 + i, w, h);
+        emitRect(opaqueOut, render::BlockFace::East, tile, tex, 0.88f, view.x0 + lx, j + Level::minBuildHeight, view.z0 + i, w, h);
       });
     }
   }

@@ -8,8 +8,8 @@ class SpectatorGameMode : public GameMode {
 public:
   using GameMode::GameMode;
 
-  bool destroyBlockAt(int x, int y, int z) override;
-  bool placeBlockAt(int x, int y, int z) override;
+  bool destroyBlockAt(int x, int y, int z) override { return false; };
+  bool placeBlockAt(int x, int y, int z) override { return false; };
   GameModeType type() const override { return GameModeType::Spectator; }
 };
 
