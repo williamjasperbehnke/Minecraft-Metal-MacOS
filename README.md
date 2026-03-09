@@ -18,9 +18,19 @@ open build/MinecraftMetal.app
 ### Application Layer
 
 - `src/Client/App/AppDelegate.mm`
-  - Owns window, `MTKView`, Metal pipelines/sampler/texture, and frame loop.
-  - Captures keyboard/mouse input and forwards normalized state into gameplay.
-  - Bridges CPU mesh data to GPU buffers via `MetalRendererImpl`.
+  - Owns window, `MTKView`, Metal resources, and frame loop.
+  - Routes Cocoa events to `AppInputState` and keeps platform event handling separate from gameplay input policy.
+  - Bridges CPU mesh data to GPU buffers via `MetalRendererBridge`.
+- `src/Client/App/AppInputState.{h,mm}`
+  - Input policy and translation layer (movement keys, hotbar keys, mouse buttons, scroll wheel, inventory gestures).
+  - Owns inventory interaction logic (drag split, swap/drop shortcuts) and hotbar tooltip trigger signaling.
+- `src/Client/App/InventoryView.{h,mm}`
+  - HUD/inventory rendering and item icon cache.
+  - Shows item tooltips (inventory hover + hotbar slot-change tooltip with timeout).
+- `src/Client/App/CrosshairView.mm`
+  - Crosshair rendering from `Assets/icons.png`.
+- `src/Client/App/UiImageHelpers.h`
+  - Shared UI helpers used by HUD views (`findAssetPath`, atlas source-rect helpers).
 - `src/Client/App/main.mm`
   - Cocoa app bootstrap.
 
@@ -82,16 +92,19 @@ open build/MinecraftMetal.app
     - `mc::detail::FloraMesher`
     - `mc::detail::TransparentMesher`
     - `mc::detail::OpaqueGreedyMesher`
+- `src/Client/Render/BlockRender.h`
+  - Shared block face mapping, tint rules, and face bound helpers.
 
 ## Data/Control Flow
 
 ### Per-Frame Loop
 
 1. `AppDelegate` gathers input and mouse deltas.
-2. Input is passed to `Minecraft` (`InputState`, break/place hold state).
-3. `Minecraft::tick()` updates controllers, player state, and world interactions.
-4. `LevelRenderer::tick()` processes dirty chunk rebuild work and draw list updates.
-5. `AppDelegate` issues Metal draws for opaque, transparent, overlays, and debug lines.
+2. `AppInputState` translates events into gameplay input state and transient UI trigger signals.
+3. Input state is passed to `Minecraft` (`InputState`, break/place hold state).
+4. `Minecraft::tick()` updates controllers, player state, and world interactions.
+5. `LevelRenderer::tick()` processes dirty chunk rebuild work and draw list updates.
+6. `AppDelegate` issues Metal draws for opaque, transparent, overlays, and debug lines.
 
 ### Block Edit Path
 
@@ -111,6 +124,12 @@ open build/MinecraftMetal.app
 
 - Local runtime terrain atlas:
   - `Assets/terrain.png`
+- UI textures:
+  - `Assets/icons.png`
+  - `Assets/slot.png`
+  - `Assets/hotbar_item_back.png`
+  - `Assets/hotbar_item_selected.png`
+  - `Assets/inventory_panel.png`
 
 ## Input Summary
 
@@ -120,6 +139,11 @@ open build/MinecraftMetal.app
 - Sprint: `Control` + double-tap forward latch
 - Break: hold left mouse
 - Place: hold right mouse (repeat interval)
+- Hotbar select: `1..9` and mouse wheel
+- Inventory:
+  - Toggle: `E`
+  - Shift-click transfer, right-click split placement, left-drag split, middle-click clone (creative)
+  - `Shift` while inventory is open does not move/crouch the player
 - Debug borders: `B`
 - Render mode cycle: `M`
 - Toggle creative/spectator: `G` / `V`

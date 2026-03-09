@@ -20,11 +20,19 @@ This document describes the current class structure, ownership model, and runtim
 
 - `AppDelegate`
   - Window/view setup, shader pipeline creation, texture loading
-  - Input event capture + normalization
+  - Event routing only (delegates input policy to `AppInputState`)
   - Per-frame render submission
-- `MetalRendererImpl` (inside `AppDelegate.mm`)
+- `MetalRendererBridge` (inside `AppDelegate.mm`)
   - GPU buffer ownership for chunk meshes and overlays
   - Transfer bridge implementing `mc::MetalRenderer`
+- `AppInputState`
+  - Translates key/mouse/scroll events into gameplay input state
+  - Owns hotbar selection input semantics and inventory gesture logic
+- `InventoryView`
+  - Draws hotbar/inventory UI, item icons, counts, and tooltips
+  - Owns tooltip timeout and inventory hover visuals
+- `UiImageHelpers.h`
+  - Shared UI image helpers for asset lookup and atlas rect conversion
 
 ### Client/Core
 
@@ -90,16 +98,18 @@ Shared meshing utilities in `mc::detail`:
 - Tile classification helpers (`isTransparentTile`, `isPlantTile`)
 - Face visibility helper (`shouldRenderFaceForTile`)
 - Atlas/tint helpers (`atlasTileOrigin`, `biomeTintForBlock`)
+- Specialized block bounds/tint helpers live in `Client/Render/BlockRender.h` and are consumed by both world and UI icon rendering.
 
 ## Tick + Render Pipeline
 
 1. `AppDelegate` gathers input and mouse deltas.
-2. Input is passed to `Minecraft`.
-3. `Minecraft::tick()` updates controllers and world interactions.
-4. Block edits trigger `LevelListener` callbacks into `LevelRenderer`.
-5. `LevelRenderer::tick()` drains rebuild queues (urgent first, budget-limited).
-6. `LevelRenderer` updates draw list and overlays.
-7. `AppDelegate` renders opaque, transparent, overlay, and debug passes.
+2. `AppInputState` consumes events, updates movement/action state, and emits transient UI triggers.
+3. Input state is passed to `Minecraft`.
+4. `Minecraft::tick()` updates controllers and world interactions.
+5. Block edits trigger `LevelListener` callbacks into `LevelRenderer`.
+6. `LevelRenderer::tick()` drains rebuild queues (urgent first, budget-limited).
+7. `LevelRenderer` updates draw list and overlays.
+8. `AppDelegate` renders opaque, transparent, overlay, and debug passes.
 
 ## Chunk Dirtying Policy
 
