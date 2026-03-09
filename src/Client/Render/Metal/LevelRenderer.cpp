@@ -464,8 +464,19 @@ void LevelRenderer::buildChunkMesh(int chunkX, int chunkZ, std::vector<TerrainVe
                                  int tile) {
     const int lx = worldX - view.x0;
     const int lz = worldZ - view.z0;
-    const bool waterHasSameAbove =
-        (tile == static_cast<int>(TileId::Water)) && (view.tileAt(lx, y + 1, lz) == static_cast<int>(TileId::Water));
+    bool waterHasSameAbove = false;
+    if (tile == static_cast<int>(TileId::Water)) {
+      // Treat water as "connected above" when an elevated neighbor exists in the 3x3 around this cell.
+      // This avoids visible diagonal step artifacts in the surface texture.
+      for (int dz = -1; dz <= 1 && !waterHasSameAbove; ++dz) {
+        for (int dx = -1; dx <= 1; ++dx) {
+          if (view.tileAt(lx + dx, y + 1, lz + dz) == static_cast<int>(TileId::Water)) {
+            waterHasSameAbove = true;
+            break;
+          }
+        }
+      }
+    }
     appendFace(out, static_cast<float>(worldX), static_cast<float>(y), static_cast<float>(worldZ), face, textureIndex, shade, tile, 0.0f, true,
                waterHasSameAbove);
   };
