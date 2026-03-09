@@ -181,6 +181,11 @@ bool AppInputState::handleMovementKeyEvent(NSEvent* event, BOOL isPressed, Rende
       setInventoryOpen(game->isInventoryOpen(), game);
       return true;
     }
+    if (event.keyCode == KeyQ && !game->isInventoryOpen()) {
+      const bool dropStack = ((event.modifierFlags & NSEventModifierFlagControl) != 0);
+      game->dropSelectedHotbarItem(dropStack);
+      return true;
+    }
     const int hotbarIndex = hotbarIndexForKeyCode(event.keyCode);
     if (hotbarIndex >= 0) {
       game->selectHotbarSlot(hotbarIndex);

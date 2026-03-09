@@ -41,6 +41,7 @@ public:
   void selectHotbarSlot(int slotIndex);
   int selectedHotbarSlot() const;
   int selectedPlaceTile() const;
+  void dropSelectedHotbarItem(bool dropStack);
   const Inventory& inventory() const;
   int inventoryCarriedTile() const;
   int inventoryCarriedCount() const;

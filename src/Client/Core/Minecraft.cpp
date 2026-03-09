@@ -339,6 +339,14 @@ int Minecraft::selectedPlaceTile() const {
   return localPlayer_ ? localPlayer_->inventory().selectedTile() : static_cast<int>(TileId::Grass);
 }
 
+void Minecraft::dropSelectedHotbarItem(bool dropStack) {
+  if (!localPlayer_) {
+    return;
+  }
+  Inventory& inv = localPlayer_->inventory();
+  inv.dropFromSlot(inv.selectedHotbarIndex(), dropStack);
+}
+
 const Inventory& Minecraft::inventory() const {
   static const Inventory kFallbackInventory;
   return localPlayer_ ? localPlayer_->inventory() : kFallbackInventory;
