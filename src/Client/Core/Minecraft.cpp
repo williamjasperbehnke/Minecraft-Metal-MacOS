@@ -344,6 +344,108 @@ const Inventory& Minecraft::inventory() const {
   return localPlayer_ ? localPlayer_->inventory() : kFallbackInventory;
 }
 
+int Minecraft::inventoryCarriedTile() const {
+  if (!localPlayer_) {
+    return 0;
+  }
+  return localPlayer_->inventory().carriedSlot().tile;
+}
+
+int Minecraft::inventoryCarriedCount() const {
+  if (!localPlayer_) {
+    return 0;
+  }
+  return localPlayer_->inventory().carriedSlot().count;
+}
+
+void Minecraft::inventoryLeftClickSlot(int slotIndex, bool shiftHeld, bool isDoubleClick) {
+  if (!localPlayer_ || !isInventoryOpen()) {
+    return;
+  }
+  Inventory& inv = localPlayer_->inventory();
+  if (shiftHeld) {
+    inv.shiftLeftClickSlot(slotIndex);
+    return;
+  }
+  if (isDoubleClick) {
+    const Inventory::Slot& hovered = inv.slot(slotIndex);
+    const int collectTile = inv.hasCarriedSlot() ? inv.carriedSlot().tile : hovered.tile;
+    inv.doubleClickCollect(collectTile);
+    return;
+  }
+  inv.leftClickSlot(slotIndex);
+}
+
+void Minecraft::inventoryRightClickSlot(int slotIndex) {
+  if (!localPlayer_ || !isInventoryOpen()) {
+    return;
+  }
+  localPlayer_->inventory().rightClickSlot(slotIndex);
+}
+
+void Minecraft::inventoryMiddleClickSlot(int slotIndex) {
+  if (!localPlayer_ || !isInventoryOpen()) {
+    return;
+  }
+  localPlayer_->inventory().middleClickSlot(slotIndex, isCreativeMode());
+}
+
+void Minecraft::inventoryLeftClickOutside() {
+  if (!localPlayer_ || !isInventoryOpen()) {
+    return;
+  }
+  localPlayer_->inventory().leftClickOutside();
+}
+
+void Minecraft::inventoryRightClickOutside() {
+  if (!localPlayer_ || !isInventoryOpen()) {
+    return;
+  }
+  localPlayer_->inventory().rightClickOutside();
+}
+
+void Minecraft::inventoryHotbarSwap(int slotIndex, int hotbarIndex) {
+  if (!localPlayer_ || !isInventoryOpen()) {
+    return;
+  }
+  localPlayer_->inventory().hotbarSwapSlot(slotIndex, hotbarIndex);
+}
+
+void Minecraft::inventoryDropFromSlot(int slotIndex, bool dropStack) {
+  if (!localPlayer_ || !isInventoryOpen()) {
+    return;
+  }
+  localPlayer_->inventory().dropFromSlot(slotIndex, dropStack);
+}
+
+void Minecraft::inventoryBeginDragSplit() {
+  if (!localPlayer_ || !isInventoryOpen()) {
+    return;
+  }
+  localPlayer_->inventory().beginDragSplit();
+}
+
+void Minecraft::inventoryDragSplitAddSlot(int slotIndex) {
+  if (!localPlayer_ || !isInventoryOpen()) {
+    return;
+  }
+  localPlayer_->inventory().dragSplitAddSlot(slotIndex);
+}
+
+void Minecraft::inventoryEndDragSplit() {
+  if (!localPlayer_ || !isInventoryOpen()) {
+    return;
+  }
+  localPlayer_->inventory().endDragSplit();
+}
+
+bool Minecraft::inventoryIsDragSplitActive() const {
+  if (!localPlayer_ || !isInventoryOpen()) {
+    return false;
+  }
+  return localPlayer_->inventory().isDragSplitActive();
+}
+
 bool Minecraft::destroyBlockAt(int x, int y, int z) {
   if (!gameMode_ || !level_) {
     return false;

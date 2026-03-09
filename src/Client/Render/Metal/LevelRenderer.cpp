@@ -555,7 +555,12 @@ void LevelRenderer::buildChunkMesh(int chunkX, int chunkZ, std::vector<TerrainVe
         {render::BlockFace::East, view.tileAt(lx + 1, y, lz), 0.88f, false},
     }};
     for (const FaceRule& rule : rules) {
-      if (rule.skip || !detail::shouldRenderFaceForTile(tile, rule.neighborTile)) {
+      if (rule.skip) {
+        continue;
+      }
+      const bool isSideFace = (rule.face == render::BlockFace::North || rule.face == render::BlockFace::South ||
+                               rule.face == render::BlockFace::West || rule.face == render::BlockFace::East);
+      if (!isSideFace && !detail::shouldRenderFaceForTile(tile, rule.neighborTile)) {
         continue;
       }
       appendFace(opaqueOut, static_cast<float>(worldX), static_cast<float>(y), static_cast<float>(worldZ), rule.face,

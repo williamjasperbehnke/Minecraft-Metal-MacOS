@@ -199,9 +199,12 @@ constexpr const char* kWindowTitle = "Minecraft Clone";
                                                                  NSEventMaskLeftMouseUp |
                                                                  NSEventMaskRightMouseDown |
                                                                  NSEventMaskRightMouseUp |
+                                                                 NSEventMaskOtherMouseDown |
+                                                                 NSEventMaskOtherMouseUp |
                                                                  NSEventMaskKeyDown |
                                                                  NSEventMaskKeyUp |
                                                                  NSEventMaskFlagsChanged |
+                                                                 NSEventMaskScrollWheel |
                                                                  NSEventMaskMouseMoved |
                                                                  NSEventMaskLeftMouseDragged |
                                                                  NSEventMaskRightMouseDragged)
@@ -224,34 +227,89 @@ constexpr const char* kWindowTitle = "Minecraft Clone";
     case NSEventTypeLeftMouseDragged:
     case NSEventTypeRightMouseDragged:
       if (inventoryOpen) {
+        _inputState->handleInventoryMouseEvent(event, _game.get(), _inventoryView);
         return nil;
       }
       _game->addLookInput(static_cast<float>(event.deltaX), static_cast<float>(event.deltaY));
       return event;
     case NSEventTypeLeftMouseDown:
       if (inventoryOpen) {
+        _inputState->handleInventoryMouseEvent(event, _game.get(), _inventoryView);
         return nil;
       }
       _inputState->handleLeftMouse(true, _game.get());
       return nil;
     case NSEventTypeLeftMouseUp:
+      if (inventoryOpen) {
+        _inputState->handleInventoryMouseEvent(event, _game.get(), _inventoryView);
+        return nil;
+      }
       _inputState->handleLeftMouse(false, _game.get());
       return nil;
     case NSEventTypeRightMouseDown:
       if (inventoryOpen) {
+        _inputState->handleInventoryMouseEvent(event, _game.get(), _inventoryView);
         return nil;
       }
       _inputState->handleRightMouse(true, _game.get());
       return nil;
-    case NSEventTypeRightMouseUp:
-      _inputState->handleRightMouse(false, _game.get());
-      return nil;
-    case NSEventTypeKeyDown:
-    case NSEventTypeKeyUp:
-      if (_inputState->handleMovementKeyEvent(event, (event.type == NSEventTypeKeyDown), _debugController.get(), _game.get())) {
+    case NSEventTypeOtherMouseDown:
+      if (inventoryOpen) {
+        _inputState->handleInventoryMouseEvent(event, _game.get(), _inventoryView);
         return nil;
       }
       return event;
+    case NSEventTypeRightMouseUp:
+      if (inventoryOpen) {
+        _inputState->handleInventoryMouseEvent(event, _game.get(), _inventoryView);
+        return nil;
+      }
+      _inputState->handleRightMouse(false, _game.get());
+      return nil;
+    case NSEventTypeOtherMouseUp:
+      if (inventoryOpen) {
+        _inputState->handleInventoryMouseEvent(event, _game.get(), _inventoryView);
+        return nil;
+      }
+      return event;
+    case NSEventTypeKeyDown:
+      if (inventoryOpen) {
+        if (_inputState->handleInventoryKeyDownEvent(event, _game.get(), _inventoryView)) {
+          return nil;
+        }
+      }
+      if (_inputState->handleMovementKeyEvent(event, true, _debugController.get(), _game.get())) {
+        if (!inventoryOpen) {
+          const int tooltipTile = _inputState->takePendingHotbarTooltipTile();
+          if (tooltipTile > 0) {
+            [_inventoryView showHotbarTooltipForTile:tooltipTile];
+          }
+        }
+        return nil;
+      }
+      return event;
+    case NSEventTypeKeyUp:
+      if (_inputState->handleMovementKeyEvent(event, false, _debugController.get(), _game.get())) {
+        return nil;
+      }
+      return event;
+    case NSEventTypeScrollWheel:
+      if (!_inputState->handleScrollWheelEvent(event, _game.get())) {
+        if (inventoryOpen) {
+          return nil;
+        }
+        return event;
+      }
+      {
+        const int tooltipTile = _inputState->takePendingHotbarTooltipTile();
+        if (tooltipTile > 0) {
+          [_inventoryView showHotbarTooltipForTile:tooltipTile];
+        }
+      }
+      if (inventoryOpen) {
+        return nil;
+      }
+      return nil;
     case NSEventTypeFlagsChanged:
       _inputState->handleModifierFlagsChanged(event.modifierFlags);
       return nil;

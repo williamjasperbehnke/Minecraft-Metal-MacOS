@@ -51,6 +51,10 @@ inline simd_float3 biomeTintForBlock(int tile, bool allowGrassTint) {
   if (!isLeafRenderTile(tile) && !isGrassTintedRenderTile(tile)) {
     return {1.0f, 1.0f, 1.0f};
   }
+  if (tile == static_cast<int>(TileId::BirchLeaves)) {
+    // Match classic birch foliage tone instead of generic biome leaf tint.
+    return {128.0f / 255.0f, 167.0f / 255.0f, 85.0f / 255.0f};
+  }
   if (tile == static_cast<int>(TileId::Grass) && !allowGrassTint) {
     return {1.0f, 1.0f, 1.0f};
   }
@@ -142,10 +146,10 @@ inline int textureForTileFace(int tile, BlockFace face) {
     return 53;
   }
   if (tile == static_cast<int>(TileId::SpruceLeaves)) {
-    return 132;
+    return 133;
   }
   if (tile == static_cast<int>(TileId::BirchLeaves)) {
-    return 133;
+    return 132;
   }
   if (tile == static_cast<int>(TileId::TallGrass)) {
     return 39;
