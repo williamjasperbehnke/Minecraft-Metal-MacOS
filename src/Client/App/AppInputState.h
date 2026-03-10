@@ -30,11 +30,14 @@ public:
   void resetForFocusLoss(Minecraft* game);
   void setInventoryOpen(bool open, Minecraft* game);
   void advancePlacement(double dtSeconds, const std::function<void()>& placeAction);
+  void advanceItemDrop(double dtSeconds, Minecraft* game);
 
   InputState currentInputState() const;
   bool leftMouseHeld() const { return leftMouseHeld_; }
 
 private:
+  void clearDropRepeatState();
+
   BOOL moveForward_ = NO;
   BOOL moveBackward_ = NO;
   BOOL moveLeft_ = NO;
@@ -51,6 +54,9 @@ private:
   std::array<bool, mc::Inventory::kTotalSlots> inventoryRightDragVisited_{};
   CFAbsoluteTime lastForwardTapTime_ = 0.0;
   double placeRepeatAccumulator_ = 0.0;
+  double dropRepeatAccumulator_ = 0.0;
+  BOOL dropKeyHeld_ = NO;
+  BOOL dropStackHeld_ = NO;
   int pendingHotbarTooltipTile_ = 0;
   BOOL inventoryOpen_ = NO;
 };

@@ -63,6 +63,196 @@ simd_float3 applyCactusCutoutTint(int tile, simd_float3 color) {
   return color;
 }
 
+void appendQuadVertices(std::vector<TerrainVertex>& out, const TerrainVertex& v0, const TerrainVertex& v1, const TerrainVertex& v2,
+                        const TerrainVertex& v3, bool doubleSided = false) {
+  out.push_back(v0);
+  out.push_back(v1);
+  out.push_back(v2);
+  out.push_back(v0);
+  out.push_back(v2);
+  out.push_back(v3);
+  if (!doubleSided) {
+    return;
+  }
+  out.push_back(v0);
+  out.push_back(v2);
+  out.push_back(v1);
+  out.push_back(v0);
+  out.push_back(v3);
+  out.push_back(v2);
+}
+
+void appendDoubleSidedQuad(std::vector<TerrainVertex>& out, const simd_float3& a, const simd_float3& b, const simd_float3& c,
+                           const simd_float3& d, const simd_float3& color, const simd_float2& tileOrigin) {
+  TerrainVertex v0{};
+  TerrainVertex v1{};
+  TerrainVertex v2{};
+  TerrainVertex v3{};
+  v0.position = a;
+  v1.position = b;
+  v2.position = c;
+  v3.position = d;
+  v0.color = color;
+  v1.color = color;
+  v2.color = color;
+  v3.color = color;
+  v0.uv = {0.0f, 1.0f};
+  v1.uv = {1.0f, 1.0f};
+  v2.uv = {1.0f, 0.0f};
+  v3.uv = {0.0f, 0.0f};
+  v0.tileOrigin = tileOrigin;
+  v1.tileOrigin = tileOrigin;
+  v2.tileOrigin = tileOrigin;
+  v3.tileOrigin = tileOrigin;
+  appendQuadVertices(out, v0, v1, v2, v3, true);
+}
+
+bool isFlatDroppedItemTile(int tile) {
+  return render::isPlantRenderTile(tile) || !isSolidTileId(tile);
+}
+
+void appendDroppedItemShadow(std::vector<TerrainVertex>& out, float x, float y, float z, float radius, float alpha) {
+  const simd_float3 color{0.0f, alpha, 0.0f};
+  const simd_float2 shadowMarker{-1.0f, -1.0f};
+
+  TerrainVertex v0{};
+  TerrainVertex v1{};
+  TerrainVertex v2{};
+  TerrainVertex v3{};
+  v0.position = {x - radius, y, z - radius};
+  v1.position = {x + radius, y, z - radius};
+  v2.position = {x + radius, y, z + radius};
+  v3.position = {x - radius, y, z + radius};
+  v0.color = color;
+  v1.color = color;
+  v2.color = color;
+  v3.color = color;
+  v0.uv = {0.0f, 1.0f};
+  v1.uv = {1.0f, 1.0f};
+  v2.uv = {1.0f, 0.0f};
+  v3.uv = {0.0f, 0.0f};
+  v0.tileOrigin = shadowMarker;
+  v1.tileOrigin = shadowMarker;
+  v2.tileOrigin = shadowMarker;
+  v3.tileOrigin = shadowMarker;
+  appendQuadVertices(out, v0, v1, v2, v3);
+}
+
+bool findDroppedItemShadowY(Level* level, float itemX, float itemY, float itemZ, float* outShadowY, float* outDistance) {
+  if (!level || !outShadowY) {
+    return false;
+  }
+  const int tx = static_cast<int>(std::floor(itemX));
+  const int tz = static_cast<int>(std::floor(itemZ));
+  const int startY = static_cast<int>(std::floor(itemY + 0.05f));
+  const int minY = std::max(Level::minBuildHeight, startY - 16);
+  for (int y = startY; y >= minY; --y) {
+    if (isSolidTileId(level->getTile(tx, y, tz))) {
+      *outShadowY = static_cast<float>(y + 1) + 0.0035f;
+      if (outDistance) {
+        *outDistance = std::max(0.0f, itemY - static_cast<float>(y + 1));
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
+void setFaceUv(render::BlockFace face, float u0, float v0uv, float u1, float v1uv, TerrainVertex& v0, TerrainVertex& v1, TerrainVertex& v2,
+               TerrainVertex& v3);
+
+float droppedItemFaceShade(int tile, render::BlockFace face) {
+  if (tile == static_cast<int>(TileId::Dirt)) {
+    return (face == render::BlockFace::Top) ? 0.92f : 1.0f;
+  }
+  switch (face) {
+    case render::BlockFace::Top: return 1.0f;
+    case render::BlockFace::Bottom: return 0.55f;
+    case render::BlockFace::North: return 0.78f;
+    case render::BlockFace::South: return 0.72f;
+    case render::BlockFace::West: return 0.84f;
+    case render::BlockFace::East: return 0.84f;
+  }
+  return 1.0f;
+}
+
+void appendDroppedBlockFace(std::vector<TerrainVertex>& out, int tile, int textureIndex, render::BlockFace face, const simd_float3& center,
+                            float halfExtent, float yawRadians, float shade, int worldX, int worldZ) {
+  TerrainVertex v0{};
+  TerrainVertex v1{};
+  TerrainVertex v2{};
+  TerrainVertex v3{};
+
+  auto rotateAndTranslate = [&](const simd_float3& p) {
+    const float cs = std::cos(yawRadians);
+    const float sn = std::sin(yawRadians);
+    const simd_float3 r{p.x * cs - p.z * sn, p.y, p.x * sn + p.z * cs};
+    return center + r;
+  };
+
+  const float modelScale = halfExtent * 2.0f;
+  const float sideInset = render::cactusSideInsetForFace(tile, face) * modelScale;
+  const float x0 = -halfExtent + ((face == render::BlockFace::West) ? sideInset : 0.0f);
+  const float x1 = halfExtent - ((face == render::BlockFace::East) ? sideInset : 0.0f);
+  const float z0 = -halfExtent + ((face == render::BlockFace::North) ? sideInset : 0.0f);
+  const float z1 = halfExtent - ((face == render::BlockFace::South) ? sideInset : 0.0f);
+
+  switch (face) {
+    case render::BlockFace::Top:
+      v0.position = rotateAndTranslate(simd_float3{x0, halfExtent, z0});
+      v1.position = rotateAndTranslate(simd_float3{x1, halfExtent, z0});
+      v2.position = rotateAndTranslate(simd_float3{x1, halfExtent, z1});
+      v3.position = rotateAndTranslate(simd_float3{x0, halfExtent, z1});
+      break;
+    case render::BlockFace::Bottom:
+      v0.position = rotateAndTranslate(simd_float3{x0, -halfExtent, z1});
+      v1.position = rotateAndTranslate(simd_float3{x1, -halfExtent, z1});
+      v2.position = rotateAndTranslate(simd_float3{x1, -halfExtent, z0});
+      v3.position = rotateAndTranslate(simd_float3{x0, -halfExtent, z0});
+      break;
+    case render::BlockFace::North:
+      v0.position = rotateAndTranslate(simd_float3{x1, -halfExtent, z0});
+      v1.position = rotateAndTranslate(simd_float3{x1, halfExtent, z0});
+      v2.position = rotateAndTranslate(simd_float3{x0, halfExtent, z0});
+      v3.position = rotateAndTranslate(simd_float3{x0, -halfExtent, z0});
+      break;
+    case render::BlockFace::South:
+      v0.position = rotateAndTranslate(simd_float3{x0, -halfExtent, z1});
+      v1.position = rotateAndTranslate(simd_float3{x0, halfExtent, z1});
+      v2.position = rotateAndTranslate(simd_float3{x1, halfExtent, z1});
+      v3.position = rotateAndTranslate(simd_float3{x1, -halfExtent, z1});
+      break;
+    case render::BlockFace::West:
+      v0.position = rotateAndTranslate(simd_float3{x0, -halfExtent, z0});
+      v1.position = rotateAndTranslate(simd_float3{x0, halfExtent, z0});
+      v2.position = rotateAndTranslate(simd_float3{x0, halfExtent, z1});
+      v3.position = rotateAndTranslate(simd_float3{x0, -halfExtent, z1});
+      break;
+    case render::BlockFace::East:
+      v0.position = rotateAndTranslate(simd_float3{x1, -halfExtent, z1});
+      v1.position = rotateAndTranslate(simd_float3{x1, halfExtent, z1});
+      v2.position = rotateAndTranslate(simd_float3{x1, halfExtent, z0});
+      v3.position = rotateAndTranslate(simd_float3{x1, -halfExtent, z0});
+      break;
+  }
+
+  const bool allowGrassTint = (face == render::BlockFace::Top);
+  const simd_float3 tint = detail::biomeTintForBlock(tile, worldX, worldZ, allowGrassTint);
+  const simd_float3 color{tint.x * shade, tint.y * shade, tint.z * shade};
+  v0.color = color;
+  v1.color = color;
+  v2.color = color;
+  v3.color = color;
+
+  setFaceUv(face, 0.0f, 0.0f, 0.99999f, 0.99999f, v0, v1, v2, v3);
+  const simd_float2 tileOrigin = detail::atlasTileOrigin(textureIndex);
+  v0.tileOrigin = tileOrigin;
+  v1.tileOrigin = tileOrigin;
+  v2.tileOrigin = tileOrigin;
+  v3.tileOrigin = tileOrigin;
+  appendQuadVertices(out, v0, v1, v2, v3, true);
+}
+
 void setFacePositions(render::BlockFace face, const render::FaceBounds& bounds, TerrainVertex& v0, TerrainVertex& v1, TerrainVertex& v2,
                       TerrainVertex& v3) {
   switch (face) {
@@ -531,12 +721,7 @@ void LevelRenderer::buildChunkMesh(int chunkX, int chunkZ, std::vector<TerrainVe
     v1.tileOrigin = tileOrigin;
     v2.tileOrigin = tileOrigin;
     v3.tileOrigin = tileOrigin;
-    out.push_back(v0);
-    out.push_back(v1);
-    out.push_back(v2);
-    out.push_back(v0);
-    out.push_back(v2);
-    out.push_back(v3);
+    appendQuadVertices(out, v0, v1, v2, v3);
   };
   auto emitCactusFaces = [&](int lx, int y, int lz, int worldX, int worldZ, int tile) {
     struct FaceRule {
@@ -727,13 +912,7 @@ void LevelRenderer::appendFace(std::vector<TerrainVertex>& out, float x, float y
   v1.tileOrigin = tileOrigin;
   v2.tileOrigin = tileOrigin;
   v3.tileOrigin = tileOrigin;
-
-  out.push_back(v0);
-  out.push_back(v1);
-  out.push_back(v2);
-  out.push_back(v0);
-  out.push_back(v2);
-  out.push_back(v3);
+  appendQuadVertices(out, v0, v1, v2, v3);
 }
 
 void LevelRenderer::setDestroyProgress(int x, int y, int z, int stage) {
@@ -774,6 +953,11 @@ void LevelRenderer::clearSelectionBlock() {
     return;
   }
   selectionActive_ = false;
+  uploadOverlayVertices();
+}
+
+void LevelRenderer::setDroppedItems(const std::vector<DroppedItemVisual>& droppedItems) {
+  droppedItems_ = droppedItems;
   uploadOverlayVertices();
 }
 
@@ -873,15 +1057,135 @@ void LevelRenderer::appendBreakParticlesOverlay() {
   breakParticles_.appendVertices(overlayVertices_, {cameraX_, cameraY_, cameraZ_});
 }
 
+void LevelRenderer::appendDroppedItemsOverlay() {
+  struct FaceSortEntry {
+    render::BlockFace face;
+    float dist2;
+  };
+  std::vector<const DroppedItemVisual*> sortedItems;
+  sortedItems.reserve(droppedItems_.size());
+  for (const DroppedItemVisual& item : droppedItems_) {
+    if (item.tile <= static_cast<int>(TileId::Air)) {
+      continue;
+    }
+    sortedItems.push_back(&item);
+  }
+  std::sort(sortedItems.begin(), sortedItems.end(), [&](const DroppedItemVisual* a, const DroppedItemVisual* b) {
+    const float adx = a->x - cameraX_;
+    const float ady = a->y - cameraY_;
+    const float adz = a->z - cameraZ_;
+    const float bdx = b->x - cameraX_;
+    const float bdy = b->y - cameraY_;
+    const float bdz = b->z - cameraZ_;
+    return (adx * adx + ady * ady + adz * adz) > (bdx * bdx + bdy * bdy + bdz * bdz);
+  });
+
+  for (const DroppedItemVisual* itemPtr : sortedItems) {
+    const DroppedItemVisual& item = *itemPtr;
+    if (item.tile <= static_cast<int>(TileId::Air)) {
+      continue;
+    }
+    float shadowY = 0.0f;
+    float shadowDistance = 0.0f;
+    if (findDroppedItemShadowY(level_, item.x, item.y, item.z, &shadowY, &shadowDistance)) {
+      const float distFade = std::clamp(shadowDistance / 5.0f, 0.0f, 1.0f);
+      const float baseRadius = isFlatDroppedItemTile(item.tile) ? 0.17f : 0.20f;
+      const float radius = baseRadius + distFade * 0.14f;
+      const float alpha = (1.0f - distFade) * 0.26f + 0.04f;
+      std::vector<TerrainVertex>& shadowTarget = item.underwater ? preTransparentOverlayVertices_ : overlayVertices_;
+      appendDroppedItemShadow(shadowTarget, item.x, shadowY, item.z, radius, alpha);
+    }
+    const int worldX = static_cast<int>(std::floor(item.x));
+    const int worldZ = static_cast<int>(std::floor(item.z));
+    if (isFlatDroppedItemTile(item.tile)) {
+      const int textureIndex = render::textureForTileFace(item.tile, render::BlockFace::North);
+      const simd_float2 tileOrigin = detail::atlasTileOrigin(textureIndex);
+      const simd_float3 tint = detail::biomeTintForBlock(item.tile, worldX, worldZ, true);
+      const simd_float3 color = {-tint.x, tint.y, tint.z};
+
+      const float halfWidth = 0.21f;
+      const float minY = item.y + item.bob;
+      const float maxY = minY + 0.34f;
+      const float cs = std::cos(item.yawRadians);
+      const float sn = std::sin(item.yawRadians);
+      const simd_float3 axisX{cs, 0.0f, sn};
+      const simd_float3 axisZ{-sn, 0.0f, cs};
+
+      const simd_float3 centerMin{item.x, minY, item.z};
+      const simd_float3 centerMax{item.x, maxY, item.z};
+
+      const simd_float3 a0 = centerMin + axisX * halfWidth;
+      const simd_float3 b0 = centerMin - axisX * halfWidth;
+      const simd_float3 c0 = centerMax - axisX * halfWidth;
+      const simd_float3 d0 = centerMax + axisX * halfWidth;
+
+      const simd_float3 a1 = centerMin + axisZ * halfWidth;
+      const simd_float3 b1 = centerMin - axisZ * halfWidth;
+      const simd_float3 c1 = centerMax - axisZ * halfWidth;
+      const simd_float3 d1 = centerMax + axisZ * halfWidth;
+
+      std::vector<TerrainVertex>& target = item.underwater ? preTransparentOverlayVertices_ : overlayVertices_;
+      appendDoubleSidedQuad(target, a0, b0, c0, d0, color, tileOrigin);
+      appendDoubleSidedQuad(target, a1, b1, c1, d1, color, tileOrigin);
+      continue;
+    }
+
+    const simd_float3 center{item.x, item.y + item.bob + 0.22f, item.z};
+    constexpr float halfExtent = 0.15f;
+    static constexpr std::array<render::BlockFace, 6> kFaces = {
+        render::BlockFace::Top, render::BlockFace::Bottom, render::BlockFace::North,
+        render::BlockFace::South, render::BlockFace::West, render::BlockFace::East,
+    };
+    std::array<FaceSortEntry, 6> sortedFaces{};
+    const float cs = std::cos(item.yawRadians);
+    const float sn = std::sin(item.yawRadians);
+    auto rotatedOffset = [&](const simd_float3& p) {
+      return simd_float3{p.x * cs - p.z * sn, p.y, p.x * sn + p.z * cs};
+    };
+    auto faceCenterOffset = [&](render::BlockFace face) {
+      switch (face) {
+        case render::BlockFace::Top: return simd_float3{0.0f, halfExtent, 0.0f};
+        case render::BlockFace::Bottom: return simd_float3{0.0f, -halfExtent, 0.0f};
+        case render::BlockFace::North: return simd_float3{0.0f, 0.0f, -halfExtent};
+        case render::BlockFace::South: return simd_float3{0.0f, 0.0f, halfExtent};
+        case render::BlockFace::West: return simd_float3{-halfExtent, 0.0f, 0.0f};
+        case render::BlockFace::East: return simd_float3{halfExtent, 0.0f, 0.0f};
+      }
+      return simd_float3{0.0f, 0.0f, 0.0f};
+    };
+    for (std::size_t i = 0; i < kFaces.size(); ++i) {
+      const render::BlockFace face = kFaces[i];
+      const simd_float3 fc = center + rotatedOffset(faceCenterOffset(face));
+      const float dx = fc.x - cameraX_;
+      const float dy = fc.y - cameraY_;
+      const float dz = fc.z - cameraZ_;
+      sortedFaces[i] = FaceSortEntry{face, dx * dx + dy * dy + dz * dz};
+    }
+    std::sort(sortedFaces.begin(), sortedFaces.end(), [](const FaceSortEntry& a, const FaceSortEntry& b) {
+      return a.dist2 > b.dist2;
+    });
+
+    std::vector<TerrainVertex>& target = item.underwater ? preTransparentOverlayVertices_ : overlayVertices_;
+    for (const FaceSortEntry& entry : sortedFaces) {
+      const render::BlockFace face = entry.face;
+      appendDroppedBlockFace(target, item.tile, render::textureForTileFace(item.tile, face), face, center, halfExtent, item.yawRadians,
+                             droppedItemFaceShade(item.tile, face), worldX, worldZ);
+    }
+  }
+}
+
 bool LevelRenderer::tickBreakParticles() {
   return breakParticles_.tick(kParticleTickSeconds);
 }
 
 void LevelRenderer::uploadOverlayVertices() {
+  preTransparentOverlayVertices_.clear();
   overlayVertices_.clear();
   appendSelectionOverlay();
   appendDestroyOverlay();
   appendBreakParticlesOverlay();
+  appendDroppedItemsOverlay();
+  metalRenderer_->setPreTransparentOverlayVertices(preTransparentOverlayVertices_);
   metalRenderer_->setTerrainOverlayVertices(overlayVertices_);
 }
 

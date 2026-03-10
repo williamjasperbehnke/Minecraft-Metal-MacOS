@@ -26,6 +26,7 @@ constexpr CGFloat kInventoryMainTopY = 83.0;
 constexpr CGFloat kInventoryHotbarX = 7.0;
 constexpr CGFloat kInventoryHotbarTopY = 141.0;
 constexpr CFTimeInterval kHotbarTooltipDuration = 1.2;
+constexpr CFTimeInterval kPickupSqueezeDuration = 0.35;
 
 int atlasTextureForTile(int tile) {
   return mc::render::textureForTileFace(tile, mc::render::BlockFace::North);
@@ -134,6 +135,14 @@ NSRect centeredSquareInRect(NSRect rect, CGFloat fill) {
   return NSMakeRect(x, y, side, side);
 }
 
+NSRect scaledRectAroundCenter(NSRect rect, CGFloat scaleX, CGFloat scaleY) {
+  const CGFloat w = std::max<CGFloat>(1.0, std::floor(rect.size.width * scaleX));
+  const CGFloat h = std::max<CGFloat>(1.0, std::floor(rect.size.height * scaleY));
+  const CGFloat x = std::floor(NSMidX(rect) - w * 0.5);
+  const CGFloat y = std::floor(NSMidY(rect) - h * 0.5);
+  return NSMakeRect(x, y, w, h);
+}
+
 NSString* itemNameForTile(int tile) {
   static NSMutableDictionary<NSNumber*, NSString*>* sNameCache = nil;
   static dispatch_once_t onceToken;
@@ -197,11 +206,13 @@ NSFont* minecraftHudFont(CGFloat size) {
   int _carriedTile;
   int _carriedCount;
   BOOL _hotbarTooltipVisibleLastFrame;
+  BOOL _pickupSqueezeActiveLastFrame;
   NSPoint _cursorPoint;
   CFAbsoluteTime _hotbarTooltipUntil;
   int _hotbarTooltipTile;
   std::array<mc::Inventory::Slot, mc::Inventory::kTotalSlots> _slots;
   std::array<mc::Inventory::Slot, mc::Inventory::kTotalSlots> _lastCachedSlots;
+  std::array<CFAbsoluteTime, mc::Inventory::kTotalSlots> _slotPickupSqueezeUntil;
   BOOL _hasCachedSlots;
   NSInteger _cachedInvFlat;
   NSInteger _cachedInvCube;
@@ -229,11 +240,13 @@ NSFont* minecraftHudFont(CGFloat size) {
     _carriedTile = 0;
     _carriedCount = 0;
     _hotbarTooltipVisibleLastFrame = NO;
+    _pickupSqueezeActiveLastFrame = NO;
     _cursorPoint = NSMakePoint(0.0, 0.0);
     _hotbarTooltipUntil = 0.0;
     _hotbarTooltipTile = 0;
     _hotbarTooltipTimer = nil;
     _hasCachedSlots = NO;
+    _slotPickupSqueezeUntil.fill(0.0);
     _cachedInvFlat = 0;
     _cachedInvCube = 0;
     _cachedHotFlat = 0;
@@ -338,7 +351,15 @@ NSFont* minecraftHudFont(CGFloat size) {
   bool slotsChanged = !_hasCachedSlots;
   for (int i = 0; i < mc::Inventory::kTotalSlots; ++i) {
     const mc::Inventory::Slot slot = inv.slot(i);
+    const mc::Inventory::Slot prevFrame = _slots[static_cast<std::size_t>(i)];
     _slots[static_cast<std::size_t>(i)] = slot;
+    if (_hasCachedSlots) {
+      const bool countIncreased = (slot.tile > 0 && slot.count > 0 && prevFrame.tile == slot.tile && slot.count > prevFrame.count);
+      const bool becameFilled = (slot.tile > 0 && slot.count > 0 && (prevFrame.tile <= 0 || prevFrame.count <= 0));
+      if (countIncreased || becameFilled) {
+        _slotPickupSqueezeUntil[static_cast<std::size_t>(i)] = now + kPickupSqueezeDuration;
+      }
+    }
     if (!_hasCachedSlots) {
       continue;
     }
@@ -388,6 +409,15 @@ NSFont* minecraftHudFont(CGFloat size) {
     _hotbarTooltipUntil = 0.0;
     [self clearHotbarTooltipTimer];
   }
+  bool pickupSqueezeActive = false;
+  for (int i = 0; i < mc::Inventory::kTotalSlots; ++i) {
+    if (now < _slotPickupSqueezeUntil[static_cast<std::size_t>(i)]) {
+      pickupSqueezeActive = true;
+      break;
+    }
+  }
+  const bool pickupSqueezeVisibilityChanged = (_pickupSqueezeActiveLastFrame != (pickupSqueezeActive ? YES : NO));
+  _pickupSqueezeActiveLastFrame = pickupSqueezeActive ? YES : NO;
   const bool tooltipVisibleNow = (!_inventoryOpen && _hotbarTooltipTile > 0 && now < _hotbarTooltipUntil);
   const bool hotbarTooltipVisibilityChanged = (_hotbarTooltipVisibleLastFrame != (tooltipVisibleNow ? YES : NO));
   _hotbarTooltipVisibleLastFrame = tooltipVisibleNow ? YES : NO;
@@ -395,7 +425,7 @@ NSFont* minecraftHudFont(CGFloat size) {
                                   (prevCarriedTile != _carriedTile) || (prevCarriedCount != _carriedCount) ||
                                   (prevHoveredSlot != _hoveredSlotIndex);
   if (visualStateChanged || slotsChanged || iconSizeChanged || tooltipVisibleNow || hotbarTooltipVisibilityChanged ||
-      _inventoryOpen) {
+      pickupSqueezeActive || pickupSqueezeVisibilityChanged || _inventoryOpen) {
     [self setNeedsDisplay:YES];
   }
 }
@@ -618,15 +648,30 @@ NSFont* minecraftHudFont(CGFloat size) {
   _cubeIconCache[key] = icon;
 }
 
-- (void)drawTileIcon:(int)tile inRect:(NSRect)slotRect {
+- (void)pickupSqueezeForSlotIndex:(int)slotIndex now:(CFAbsoluteTime)now scaleX:(CGFloat*)outScaleX scaleY:(CGFloat*)outScaleY {
+  if (!outScaleX || !outScaleY || slotIndex < 0 || slotIndex >= mc::Inventory::kTotalSlots) {
+    return;
+  }
+  const CFAbsoluteTime until = _slotPickupSqueezeUntil[static_cast<std::size_t>(slotIndex)];
+  if (now >= until) {
+    return;
+  }
+  const double remaining = std::clamp((until - now) / kPickupSqueezeDuration, 0.0, 1.0);
+  const CGFloat t = static_cast<CGFloat>(remaining * remaining);
+  *outScaleX *= std::max<CGFloat>(0.33, 1.0 - 0.84 * t);
+  *outScaleY *= (1.0 + 0.5 * t);
+}
+
+- (void)drawTileIcon:(int)tile inRect:(NSRect)slotRect scaleX:(CGFloat)scaleX scaleY:(CGFloat)scaleY {
   if (!_terrainImage || tile <= 0) {
     return;
   }
-  const NSRect dst = centeredSquareInRect(slotRect, 0.86);
-  const NSInteger w = std::max<NSInteger>(1, static_cast<NSInteger>(std::llround(dst.size.width)));
-  const NSInteger h = std::max<NSInteger>(1, static_cast<NSInteger>(std::llround(dst.size.height)));
-  [self ensureFlatIconCachedForTile:tile width:w height:h];
-  NSImage* icon = _flatIconCache[[self iconCacheKeyForTile:tile width:w height:h]];
+  const NSRect baseRect = centeredSquareInRect(slotRect, 0.86);
+  const NSInteger baseW = std::max<NSInteger>(1, static_cast<NSInteger>(std::llround(baseRect.size.width)));
+  const NSInteger baseH = std::max<NSInteger>(1, static_cast<NSInteger>(std::llround(baseRect.size.height)));
+  [self ensureFlatIconCachedForTile:tile width:baseW height:baseH];
+  NSImage* icon = _flatIconCache[[self iconCacheKeyForTile:tile width:baseW height:baseH]];
+  const NSRect dst = scaledRectAroundCenter(baseRect, scaleX, scaleY);
   [icon drawInRect:dst fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1.0];
 }
 
@@ -668,27 +713,31 @@ NSFont* minecraftHudFont(CGFloat size) {
   [NSGraphicsContext restoreGraphicsState];
 }
 
-- (void)drawCubeItem:(int)tile inRect:(NSRect)slotRect {
+- (void)drawCubeItem:(int)tile inRect:(NSRect)slotRect scaleX:(CGFloat)scaleX scaleY:(CGFloat)scaleY {
   if (!_terrainImage || tile <= 0) {
     return;
   }
 
-  const NSRect dst = centeredSquareInRect(slotRect, 0.96);
-  const NSInteger w = std::max<NSInteger>(1, static_cast<NSInteger>(std::llround(dst.size.width)));
-  const NSInteger h = std::max<NSInteger>(1, static_cast<NSInteger>(std::llround(dst.size.height)));
-  [self ensureCubeIconCachedForTile:tile width:w height:h];
-  NSImage* icon = _cubeIconCache[[self iconCacheKeyForTile:tile width:w height:h]];
+  const NSRect baseRect = centeredSquareInRect(slotRect, 0.96);
+  const NSInteger baseW = std::max<NSInteger>(1, static_cast<NSInteger>(std::llround(baseRect.size.width)));
+  const NSInteger baseH = std::max<NSInteger>(1, static_cast<NSInteger>(std::llround(baseRect.size.height)));
+  [self ensureCubeIconCachedForTile:tile width:baseW height:baseH];
+  NSImage* icon = _cubeIconCache[[self iconCacheKeyForTile:tile width:baseW height:baseH]];
+  const NSRect dst = scaledRectAroundCenter(baseRect, scaleX, scaleY);
   [icon drawInRect:dst fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1.0];
 }
 
-- (void)drawSlotContents:(const mc::Inventory::Slot&)slot inRect:(NSRect)slotRect {
+- (void)drawSlotContents:(const mc::Inventory::Slot&)slot inRect:(NSRect)slotRect slotIndex:(int)slotIndex now:(CFAbsoluteTime)now {
   if (slot.count <= 0 || slot.tile <= 0) {
     return;
   }
+  CGFloat scaleX = 1.0;
+  CGFloat scaleY = 1.0;
+  [self pickupSqueezeForSlotIndex:slotIndex now:now scaleX:&scaleX scaleY:&scaleY];
   if (isFlatItemTile(slot.tile)) {
-    [self drawTileIcon:slot.tile inRect:slotRect];
+    [self drawTileIcon:slot.tile inRect:slotRect scaleX:scaleX scaleY:scaleY];
   } else {
-    [self drawCubeItem:slot.tile inRect:slotRect];
+    [self drawCubeItem:slot.tile inRect:slotRect scaleX:scaleX scaleY:scaleY];
   }
   [self drawCount:slot.count inRect:slotRect];
 }
@@ -751,7 +800,7 @@ NSFont* minecraftHudFont(CGFloat size) {
     for (int i = 0; i < mc::Inventory::kTotalSlots; ++i) {
       const NSRect slotRect = [self inventorySlotRectForIndex:i panelRect:panelRect];
       const mc::Inventory::Slot slot = _slots[static_cast<std::size_t>(i)];
-      [self drawSlotContents:slot inRect:slotRect];
+      [self drawSlotContents:slot inRect:slotRect slotIndex:i now:now];
     }
   }
 
@@ -763,7 +812,7 @@ NSFont* minecraftHudFont(CGFloat size) {
   for (int i = 0; i < mc::Inventory::kHotbarSize; ++i) {
     const NSRect iconRect = NSMakeRect(iconX0 + i * slotStep, iconY, iconSize, iconSize);
     const mc::Inventory::Slot slot = _slots[static_cast<std::size_t>(i)];
-    [self drawSlotContents:slot inRect:iconRect];
+    [self drawSlotContents:slot inRect:iconRect slotIndex:i now:now];
   }
 
   auto drawTooltipLabel = ^(NSString* text, NSPoint anchor, bool centered) {
@@ -806,7 +855,7 @@ NSFont* minecraftHudFont(CGFloat size) {
     const CGFloat size = kInventorySlotPx * kUiScale;
     const NSRect cursorRect = NSMakeRect(std::floor(_cursorPoint.x - size * 0.5), std::floor(_cursorPoint.y - size * 0.5), size, size);
     const mc::Inventory::Slot carriedSlot{_carriedTile, _carriedCount};
-    [self drawSlotContents:carriedSlot inRect:cursorRect];
+    [self drawSlotContents:carriedSlot inRect:cursorRect slotIndex:-1 now:now];
   }
 
 }

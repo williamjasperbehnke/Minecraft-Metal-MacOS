@@ -57,6 +57,7 @@ set(SRC
   src/Client/App/MetalRendererBridge.mm
   src/Client/App/TerrainRenderResources.mm
   src/Client/Core/BlockInteractionController.cpp
+  src/Client/Core/Camera.cpp
   src/Client/Core/Minecraft.cpp
   src/Client/Core/PlayerController.cpp
   src/Client/Inventory/Inventory.cpp
@@ -76,6 +77,8 @@ set(SRC
   src/World/Level/Level.cpp
   src/World/Chunk/LevelChunk.cpp
   src/World/Entity/Entity.cpp
+  src/World/Entity/ItemEntity.cpp
+  src/World/Entity/ItemEntitySystem.cpp
   src/World/Entity/Mob.cpp
   src/World/Entity/Player.cpp
 )

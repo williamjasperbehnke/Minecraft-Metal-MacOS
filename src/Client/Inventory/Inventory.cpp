@@ -305,6 +305,41 @@ void Inventory::dropFromSlot(int slotIndex, bool dropStack) {
   normalizeSlot(target);
 }
 
+int Inventory::addItem(int tile, int count) {
+  if (tile <= 0 || count <= 0) {
+    return 0;
+  }
+
+  int remaining = count;
+  for (Slot& slotRef : slots_) {
+    normalizeSlot(slotRef);
+    if (slotRef.tile != tile || slotRef.count >= kMaxStackSize) {
+      continue;
+    }
+    const int moved = std::min(remaining, kMaxStackSize - slotRef.count);
+    slotRef.count += moved;
+    remaining -= moved;
+    if (remaining <= 0) {
+      return 0;
+    }
+  }
+
+  for (Slot& slotRef : slots_) {
+    normalizeSlot(slotRef);
+    if (!isEmptySlot(slotRef)) {
+      continue;
+    }
+    const int moved = std::min(remaining, kMaxStackSize);
+    slotRef = {tile, moved};
+    remaining -= moved;
+    if (remaining <= 0) {
+      return 0;
+    }
+  }
+
+  return remaining;
+}
+
 bool Inventory::canAcceptDragSplit(const Slot& slot) const {
   if (isEmptySlot(carried_)) {
     return false;

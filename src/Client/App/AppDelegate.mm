@@ -343,9 +343,10 @@ constexpr const char* kWindowTitle = "Minecraft Clone";
   _game->tick(dt);
   if (_inputState && !_game->isInventoryOpen()) {
     _inputState->advancePlacement(dt, [self]() { self->_game->interactAtCrosshair(true); });
+    _inputState->advanceItemDrop(dt, _game.get());
   }
   [self updateMouseCaptureState];
-  _crosshairView.hidden = (_game->isInventoryOpen() || _game->isSpectatorMode()) ? YES : NO;
+  _crosshairView.hidden = (_game->isInventoryOpen() || _game->isSpectatorMode() || _game->isThirdPersonMode()) ? YES : NO;
   if (_relativeMouseEnabled) {
     [self centerCursorInWindow];
   }

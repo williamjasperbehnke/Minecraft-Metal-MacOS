@@ -56,6 +56,11 @@ void MetalRendererBridge::setViewParams(const TerrainViewParams& params) {
   params_ = params;
 }
 
+void MetalRendererBridge::setPreTransparentOverlayVertices(const std::vector<TerrainVertex>& vertices) {
+  preTransparentOverlayVertices_ = vertices;
+  preTransparentOverlayVertexBuffer_ = makeSharedVertexBuffer(device_, preTransparentOverlayVertices_);
+}
+
 void MetalRendererBridge::setTerrainOverlayVertices(const std::vector<TerrainVertex>& vertices) {
   overlayVertices_ = vertices;
   overlayVertexBuffer_ = makeSharedVertexBuffer(device_, overlayVertices_);
@@ -64,6 +69,14 @@ void MetalRendererBridge::setTerrainOverlayVertices(const std::vector<TerrainVer
 void MetalRendererBridge::setDebugLineVertices(const std::vector<TerrainVertex>& vertices) {
   debugLineVertices_ = vertices;
   debugLineBuffer_ = makeSharedVertexBuffer(device_, debugLineVertices_);
+}
+
+id<MTLBuffer> MetalRendererBridge::preTransparentOverlayVertexBuffer() const {
+  return preTransparentOverlayVertexBuffer_;
+}
+
+NSUInteger MetalRendererBridge::preTransparentOverlayVertexCount() const {
+  return static_cast<NSUInteger>(preTransparentOverlayVertices_.size());
 }
 
 id<MTLBuffer> MetalRendererBridge::overlayVertexBuffer() const {

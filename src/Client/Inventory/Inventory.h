@@ -44,6 +44,7 @@ public:
   void doubleClickCollect(int tile);
   void hotbarSwapSlot(int slotIndex, int hotbarIndex);
   void dropFromSlot(int slotIndex, bool dropStack);
+  int addItem(int tile, int count);
   void beginDragSplit();
   void dragSplitAddSlot(int slotIndex);
   void endDragSplit();

@@ -8,6 +8,7 @@
 #include "Client/GameMode/SurvivalGameMode.h"
 #include "Client/Render/Metal/LevelRenderer.h"
 #include "Client/Render/Metal/MetalRenderer.h"
+#include "Common/Math/Vec3.h"
 #include "World/Entity/Player.h"
 #include "World/Level/Level.h"
 #include "World/Tile/Tile.h"
@@ -19,6 +20,16 @@ namespace {
 int floorDiv16(int v) {
   return v >= 0 ? v / 16 : (v - 15) / 16;
 }
+
+using math::vec3::add;
+using math::vec3::cross;
+using math::vec3::dot;
+using math::vec3::mul;
+using math::vec3::normalize;
+using math::vec3::sub;
+
+constexpr int kBlockDropThrowTimeTicks = 10;
+constexpr int kPlayerDropThrowTimeTicks = 40;
 
 bool findSafeSpawn(Level* level, int* outX, int* outY, int* outZ) {
   if (!level || !outX || !outY || !outZ) {
@@ -66,38 +77,6 @@ bool findSafeSpawn(Level* level, int* outX, int* outY, int* outZ) {
   }
 
   return false;
-}
-
-simd_float3 add(const simd_float3& a, const simd_float3& b) {
-  return {a.x + b.x, a.y + b.y, a.z + b.z};
-}
-
-simd_float3 sub(const simd_float3& a, const simd_float3& b) {
-  return {a.x - b.x, a.y - b.y, a.z - b.z};
-}
-
-simd_float3 mul(const simd_float3& v, float s) {
-  return {v.x * s, v.y * s, v.z * s};
-}
-
-float dot(const simd_float3& a, const simd_float3& b) {
-  return a.x * b.x + a.y * b.y + a.z * b.z;
-}
-
-simd_float3 cross(const simd_float3& a, const simd_float3& b) {
-  return {
-      a.y * b.z - a.z * b.y,
-      a.z * b.x - a.x * b.z,
-      a.x * b.y - a.y * b.x,
-  };
-}
-
-simd_float3 normalize(const simd_float3& v) {
-  const float len = std::sqrt(dot(v, v));
-  if (len < 1e-6f) {
-    return {0.0f, 0.0f, 0.0f};
-  }
-  return {v.x / len, v.y / len, v.z / len};
 }
 
 simd_float4x4 perspective(float fovy, float aspect, float nearZ, float farZ) {
@@ -204,6 +183,7 @@ void Minecraft::tick(double dtSeconds) {
       [this](int x, int y, int z) { return level_->getTile(x, y, z); },
       [this](int x, int y, int z) { return destroyBlockAt(x, y, z); },
       [this]() { return raycastCrosshairHit(); }, levelRenderer_.get());
+  updateDroppedItems(dtSeconds);
   updateRendererState();
 }
 
@@ -238,9 +218,32 @@ void Minecraft::updateRendererState() {
   }
 
   levelRenderer_->setRenderCenter(static_cast<int>(localPlayer_->x()), static_cast<int>(localPlayer_->z()));
-  const simd_float3 eye = cameraPosition();
+  const simd_float3 eye = renderCameraPosition();
   levelRenderer_->setCameraPosition(eye.x, eye.y, eye.z);
   levelRenderer_->setViewProj(viewParams(viewAspect_).viewProj);
+  std::vector<LevelRenderer::DroppedItemVisual> visuals;
+  const std::vector<ItemEntity>& droppedItems = itemEntitySystem_.items();
+  const float itemPartialTicks = itemEntitySystem_.renderPartialTicks();
+  const float itemPartialDt = itemPartialTicks * (1.0f / 20.0f);
+  visuals.reserve(droppedItems.size());
+  for (const ItemEntity& item : droppedItems) {
+    if (!item.isAlive()) {
+      continue;
+    }
+    LevelRenderer::DroppedItemVisual visual{};
+    visual.x = static_cast<float>(item.x() + item.motionX() * itemPartialDt);
+    visual.y = static_cast<float>(item.y() + item.motionY() * itemPartialDt);
+    visual.z = static_cast<float>(item.z() + item.motionZ() * itemPartialDt);
+    visual.yawRadians = item.yawRadians(itemPartialTicks);
+    visual.bob = item.bob(itemPartialTicks);
+    visual.tile = item.tile();
+    const int tx = static_cast<int>(std::floor(item.x()));
+    const int ty = static_cast<int>(std::floor(item.y()));
+    const int tz = static_cast<int>(std::floor(item.z()));
+    visual.underwater = level_ && level_->getTile(tx, ty, tz) == static_cast<int>(TileId::Water);
+    visuals.push_back(visual);
+  }
+  levelRenderer_->setDroppedItems(visuals);
   levelRenderer_->tick();
 }
 
@@ -313,6 +316,10 @@ void Minecraft::toggleInventory() {
   localPlayer_->inventory().toggleOpen();
 }
 
+void Minecraft::toggleThirdPersonMode() {
+  camera_.toggleViewMode();
+}
+
 void Minecraft::setInventoryOpen(bool open) {
   if (!localPlayer_) {
     return;
@@ -344,7 +351,14 @@ void Minecraft::dropSelectedHotbarItem(bool dropStack) {
     return;
   }
   Inventory& inv = localPlayer_->inventory();
-  inv.dropFromSlot(inv.selectedHotbarIndex(), dropStack);
+  const int slotIndex = inv.selectedHotbarIndex();
+  const Inventory::Slot slot = inv.slot(slotIndex);
+  if (slot.tile <= 0 || slot.count <= 0) {
+    return;
+  }
+  const int dropCount = dropStack ? slot.count : 1;
+  inv.dropFromSlot(slotIndex, dropStack);
+  spawnPlayerDrop(slot.tile, dropCount);
 }
 
 const Inventory& Minecraft::inventory() const {
@@ -402,14 +416,24 @@ void Minecraft::inventoryLeftClickOutside() {
   if (!localPlayer_ || !isInventoryOpen()) {
     return;
   }
-  localPlayer_->inventory().leftClickOutside();
+  Inventory& inv = localPlayer_->inventory();
+  const Inventory::Slot carried = inv.carriedSlot();
+  inv.leftClickOutside();
+  if (carried.tile > 0 && carried.count > 0) {
+    spawnInventoryDrop(carried.tile, carried.count);
+  }
 }
 
 void Minecraft::inventoryRightClickOutside() {
   if (!localPlayer_ || !isInventoryOpen()) {
     return;
   }
-  localPlayer_->inventory().rightClickOutside();
+  Inventory& inv = localPlayer_->inventory();
+  const Inventory::Slot carried = inv.carriedSlot();
+  inv.rightClickOutside();
+  if (carried.tile > 0 && carried.count > 0) {
+    spawnInventoryDrop(carried.tile, 1);
+  }
 }
 
 void Minecraft::inventoryHotbarSwap(int slotIndex, int hotbarIndex) {
@@ -423,7 +447,14 @@ void Minecraft::inventoryDropFromSlot(int slotIndex, bool dropStack) {
   if (!localPlayer_ || !isInventoryOpen()) {
     return;
   }
-  localPlayer_->inventory().dropFromSlot(slotIndex, dropStack);
+  Inventory& inv = localPlayer_->inventory();
+  const Inventory::Slot slot = inv.slot(slotIndex);
+  if (slot.tile <= 0 || slot.count <= 0) {
+    return;
+  }
+  const int dropCount = dropStack ? slot.count : 1;
+  inv.dropFromSlot(slotIndex, dropStack);
+  spawnInventoryDrop(slot.tile, dropCount);
 }
 
 void Minecraft::inventoryBeginDragSplit() {
@@ -458,49 +489,129 @@ bool Minecraft::destroyBlockAt(int x, int y, int z) {
   if (!gameMode_ || !level_) {
     return false;
   }
-  if (level_->getTile(x, y, z) == static_cast<int>(TileId::Air)) {
+  const int tile = level_->getTile(x, y, z);
+  if (tile == static_cast<int>(TileId::Air)) {
     return false;
   }
-  return gameMode_->destroyBlockAt(x, y, z);
+  const bool destroyed = gameMode_->destroyBlockAt(x, y, z);
+  if (destroyed) {
+    spawnBlockDrop(x, y, z, tile);
+  }
+  return destroyed;
+}
+
+void Minecraft::updateDroppedItems(double dtSeconds) {
+  if (!level_ || !localPlayer_ || dtSeconds <= 0.0) {
+    return;
+  }
+  itemEntitySystem_.tick(dtSeconds, level_.get(), localPlayer_.get(), &localPlayer_->inventory());
+}
+
+void Minecraft::spawnDroppedItem(int tile, int count, const simd_float3& position, const simd_float3& velocity, int throwTimeTicks) {
+  itemEntitySystem_.spawnDrop(tile, count, position, velocity, throwTimeTicks);
+}
+
+void Minecraft::spawnBlockDrop(int x, int y, int z, int tile) {
+  const simd_float3 position{
+      static_cast<float>(x) + randomFloat(0.15f, 0.85f),
+      static_cast<float>(y) + randomFloat(0.15f, 0.85f),
+      static_cast<float>(z) + randomFloat(0.15f, 0.85f),
+  };
+  const simd_float3 velocity{
+      randomFloat(-0.1f, 0.1f),
+      0.2f,
+      randomFloat(-0.1f, 0.1f),
+  };
+  spawnDroppedItem(tile, 1, position, velocity, kBlockDropThrowTimeTicks);
+}
+
+void Minecraft::spawnPlayerDrop(int tile, int count) {
+  const simd_float3 eye = cameraPosition();
+  const simd_float3 forward = normalize(forwardVector());
+  const simd_float3 position{eye.x, eye.y - 0.3f, eye.z};
+  simd_float3 velocity = mul(forward, 0.3f);
+  velocity.y += 0.1f;
+  const float dir = randomFloat(0.0f, 6.283185307f);
+  const float spread = randomFloat(0.0f, 0.02f);
+  velocity.x += std::cos(dir) * spread;
+  velocity.y += randomFloat(-0.1f, 0.1f);
+  velocity.z += std::sin(dir) * spread;
+  spawnDroppedItem(tile, count, position, velocity, kPlayerDropThrowTimeTicks);
+}
+
+void Minecraft::spawnInventoryDrop(int tile, int count) {
+  const simd_float3 eye = cameraPosition();
+  const simd_float3 forward = normalize(forwardVector());
+  const simd_float3 position{eye.x, eye.y - 0.3f, eye.z};
+  simd_float3 velocity = mul(forward, 0.3f);
+  velocity.y += 0.1f;
+  const float dir = randomFloat(0.0f, 6.283185307f);
+  const float spread = randomFloat(0.0f, 0.02f);
+  velocity.x += std::cos(dir) * spread;
+  velocity.y += randomFloat(-0.1f, 0.1f);
+  velocity.z += std::sin(dir) * spread;
+  spawnDroppedItem(tile, count, position, velocity, kPlayerDropThrowTimeTicks);
+}
+
+float Minecraft::randomFloat(float minValue, float maxValue) {
+  std::uniform_real_distribution<float> dist(minValue, maxValue);
+  return dist(rng_);
 }
 
 bool Minecraft::placeBlockAt(int x, int y, int z) {
-  if (!gameMode_) {
+  if (!gameMode_ || !localPlayer_) {
     return false;
   }
-  return gameMode_->placeBlockAt(x, y, z);
+  Inventory& inv = localPlayer_->inventory();
+  const int selected = inv.selectedHotbarIndex();
+  if (!isCreativeMode()) {
+    const Inventory::Slot slot = inv.slot(selected);
+    if (slot.tile <= 0 || slot.count <= 0) {
+      return false;
+    }
+  }
+  const bool placed = gameMode_->placeBlockAt(x, y, z);
+  if (placed) {
+    if (!isCreativeMode()) {
+      inv.dropFromSlot(selected, false);
+    }
+    itemEntitySystem_.pushItemsOutOfBlock(level_.get(), x, y, z);
+  }
+  return placed;
 }
 
 simd_float3 Minecraft::cameraPosition() const {
   if (!localPlayer_) {
     return {0.0f, 5.0f, 0.0f};
   }
-  const float eyeHeight = kEyeHeight - (playerController_.isCrouching() ? kCrouchEyeOffset : 0.0f);
-  return {static_cast<float>(localPlayer_->x()), static_cast<float>(localPlayer_->y()) + eyeHeight,
-          static_cast<float>(localPlayer_->z())};
+  return camera_.firstPersonEye(localPlayer_->x(), localPlayer_->y(), localPlayer_->z(), playerController_.isCrouching());
+}
+
+simd_float3 Minecraft::renderCameraPosition() const {
+  const simd_float3 eye = cameraPosition();
+  if (!level_ || !localPlayer_) {
+    return eye;
+  }
+  return camera_.renderEye(eye, playerController_.yawRadians(), playerController_.pitchRadians(),
+                           [this](int x, int y, int z) { return level_ && isSolidTileId(level_->getTile(x, y, z)); });
 }
 
 simd_float3 Minecraft::forwardVector() const {
-  const float pitch = playerController_.pitchRadians();
-  const float yaw = playerController_.yawRadians();
-  const float cp = std::cos(pitch);
-  const simd_float3 f{std::sin(yaw) * cp, std::sin(pitch), std::cos(yaw) * cp};
-  return normalize(f);
+  return camera_.forward(playerController_.yawRadians(), playerController_.pitchRadians());
 }
 
 simd_float3 Minecraft::rightVector() const {
-  const simd_float3 up{0.0f, 1.0f, 0.0f};
-  return normalize(cross(up, forwardVector()));
+  return camera_.right(playerController_.yawRadians(), playerController_.pitchRadians());
 }
 
 simd_float3 Minecraft::upVector() const {
-  return normalize(cross(rightVector(), forwardVector()));
+  return camera_.up(playerController_.yawRadians(), playerController_.pitchRadians());
 }
 
 TerrainViewParams Minecraft::viewParams(float aspect) const {
-  const simd_float3 eye = cameraPosition();
-  const simd_float3 forward = forwardVector();
-  const simd_float3 target = add(eye, forward);
+  const simd_float3 eye = renderCameraPosition();
+  const simd_float3 target =
+      camera_.viewTarget(eye, cameraPosition(), playerController_.yawRadians(), playerController_.pitchRadians());
   const simd_float3 up{0.0f, 1.0f, 0.0f};
   const simd_float4x4 view = lookAt(eye, target, up);
   const simd_float4x4 proj = perspective(currentFovRadians_, aspect > 0.001f ? aspect : 1.0f, 0.05f, 300.0f);
@@ -602,8 +713,16 @@ bool Minecraft::lookTargetBlock(int* x, int* y, int* z) const {
   return blockInteractionController_.lookTargetBlock(x, y, z);
 }
 
+bool Minecraft::playerHitbox(AABB* out) const {
+  if (!out || !localPlayer_) {
+    return false;
+  }
+  *out = localPlayer_->aabb();
+  return true;
+}
+
 simd_float3 Minecraft::cameraWorldPosition() const {
-  return cameraPosition();
+  return renderCameraPosition();
 }
 
 float Minecraft::lookYawDegrees() const {
@@ -620,7 +739,7 @@ bool Minecraft::isCameraUnderwater() const {
   if (!level_ || !localPlayer_) {
     return false;
   }
-  const simd_float3 eye = cameraPosition();
+  const simd_float3 eye = renderCameraPosition();
   const int tx = static_cast<int>(std::floor(eye.x));
   const int ty = static_cast<int>(std::floor(eye.y));
   const int tz = static_cast<int>(std::floor(eye.z));

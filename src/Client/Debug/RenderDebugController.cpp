@@ -6,6 +6,10 @@ void RenderDebugController::toggleChunkBorders() {
   showChunkBorders_ = !showChunkBorders_;
 }
 
+void RenderDebugController::toggleItemHitboxes() {
+  showItemHitboxes_ = !showItemHitboxes_;
+}
+
 void RenderDebugController::cycleRenderMode() {
   switch (renderMode_) {
     case RenderMode::Textured:

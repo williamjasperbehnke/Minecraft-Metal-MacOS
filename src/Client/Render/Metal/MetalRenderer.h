@@ -27,6 +27,7 @@ public:
   virtual void removeChunkMesh(std::int64_t key) = 0;
   virtual void clearChunkMeshes() = 0;
   virtual void setChunkDrawList(const std::vector<std::int64_t>& keys) = 0;
+  virtual void setPreTransparentOverlayVertices(const std::vector<TerrainVertex>& vertices) = 0;
   virtual void setTerrainOverlayVertices(const std::vector<TerrainVertex>& vertices) = 0;
   virtual void setDebugLineVertices(const std::vector<TerrainVertex>& vertices) = 0;
   virtual void setViewParams(const TerrainViewParams& params) = 0;

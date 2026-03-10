@@ -16,15 +16,8 @@ constexpr double kTransparentSortIntervalSeconds = 0.066;
 
 }  // namespace
 
-void AppWorldRenderer::appendSelectionWireCube(std::vector<TerrainVertex>& out, int x, int y, int z) {
-  const float minX = static_cast<float>(x) - 0.001f;
-  const float minY = static_cast<float>(y) - 0.001f;
-  const float minZ = static_cast<float>(z) - 0.001f;
-  const float maxX = static_cast<float>(x + 1) + 0.001f;
-  const float maxY = static_cast<float>(y + 1) + 0.001f;
-  const float maxZ = static_cast<float>(z + 1) + 0.001f;
-  const simd_float3 color = {0.0f, 0.0f, 0.0f};
-
+void AppWorldRenderer::appendWireAabb(std::vector<TerrainVertex>& out, float minX, float minY, float minZ, float maxX, float maxY, float maxZ,
+                                      simd_float3 color) {
   auto vtx = [&](float px, float py, float pz) {
     TerrainVertex v{};
     v.position = {px, py, pz};
@@ -52,6 +45,16 @@ void AppWorldRenderer::appendSelectionWireCube(std::vector<TerrainVertex>& out, 
   addEdge(maxX, minY, minZ, maxX, maxY, minZ);
   addEdge(maxX, minY, maxZ, maxX, maxY, maxZ);
   addEdge(minX, minY, maxZ, minX, maxY, maxZ);
+}
+
+void AppWorldRenderer::appendSelectionWireCube(std::vector<TerrainVertex>& out, int x, int y, int z) {
+  const float minX = static_cast<float>(x) - 0.001f;
+  const float minY = static_cast<float>(y) - 0.001f;
+  const float minZ = static_cast<float>(z) - 0.001f;
+  const float maxX = static_cast<float>(x + 1) + 0.001f;
+  const float maxY = static_cast<float>(y + 1) + 0.001f;
+  const float maxZ = static_cast<float>(z + 1) + 0.001f;
+  appendWireAabb(out, minX, minY, minZ, maxX, maxY, maxZ, {0.0f, 0.0f, 0.0f});
 }
 
 AppWorldRenderResult AppWorldRenderer::render(MTKView* view, id<MTLCommandQueue> queue,
@@ -91,6 +94,31 @@ AppWorldRenderResult AppWorldRenderer::render(MTKView* view, id<MTLCommandQueue>
   result.hasLookTarget = game.lookTargetBlock(&result.lookX, &result.lookY, &result.lookZ);
   if (result.hasLookTarget) {
     appendSelectionWireCube(debugLineVertices_, result.lookX, result.lookY, result.lookZ);
+  }
+  if (game.isThirdPersonMode()) {
+    AABB playerBox{};
+    if (game.playerHitbox(&playerBox)) {
+      appendWireAabb(debugLineVertices_, static_cast<float>(playerBox.minX), static_cast<float>(playerBox.minY),
+                     static_cast<float>(playerBox.minZ), static_cast<float>(playerBox.maxX), static_cast<float>(playerBox.maxY),
+                     static_cast<float>(playerBox.maxZ), {0.2f, 0.95f, 0.2f});
+    }
+  }
+  if (debugController && debugController->showItemHitboxes()) {
+    constexpr float eps = 0.001f;
+    constexpr float hw = static_cast<float>(ItemEntity::kHalfWidth);
+    constexpr float hh = static_cast<float>(ItemEntity::kHalfHeight);
+    for (const ItemEntity& item : game.droppedItems()) {
+      if (!item.isAlive()) {
+        continue;
+      }
+      const float minX = static_cast<float>(item.x()) - hw - eps;
+      const float maxX = static_cast<float>(item.x()) + hw + eps;
+      const float minY = static_cast<float>(item.y()) - hh - eps;
+      const float maxY = static_cast<float>(item.y()) + hh + eps;
+      const float minZ = static_cast<float>(item.z()) - hw - eps;
+      const float maxZ = static_cast<float>(item.z()) + hw + eps;
+      appendWireAabb(debugLineVertices_, minX, minY, minZ, maxX, maxY, maxZ, {1.0f, 0.35f, 0.2f});
+    }
   }
   bridge.setDebugLineVertices(debugLineVertices_);
 
@@ -134,6 +162,15 @@ AppWorldRenderResult AppWorldRenderer::render(MTKView* view, id<MTLCommandQueue>
   [enc setDepthStencilState:resources.transparentDepthState()];
   [enc setCullMode:(cameraUnderwater ? MTLCullModeNone : MTLCullModeBack)];
   bindCommonFrameState(fragmentParams);
+
+  id<MTLBuffer> povb = bridge.preTransparentOverlayVertexBuffer();
+  const NSUInteger pocount = bridge.preTransparentOverlayVertexCount();
+  if (!cameraUnderwater && povb && pocount > 0) {
+    [enc setCullMode:MTLCullModeBack];
+    [enc setVertexBuffer:povb offset:0 atIndex:0];
+    [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:pocount];
+    [enc setCullMode:(cameraUnderwater ? MTLCullModeNone : MTLCullModeBack)];
+  }
 
   transparentSortAccum_ += dtRaw;
   if (transparentSortAccum_ >= kTransparentSortIntervalSeconds || transparentDrawOrder_.empty()) {
@@ -180,17 +217,6 @@ AppWorldRenderResult AppWorldRenderer::render(MTKView* view, id<MTLCommandQueue>
     [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:mesh->transparentCount];
   }
 
-  id<MTLBuffer> ovb = bridge.overlayVertexBuffer();
-  const NSUInteger ocount = bridge.overlayVertexCount();
-  if (ovb && ocount > 0) {
-    [enc setRenderPipelineState:resources.transparentPipeline()];
-    [enc setDepthStencilState:resources.transparentDepthState()];
-    [enc setCullMode:MTLCullModeBack];
-    bindCommonFrameState(fragmentParams);
-    [enc setVertexBuffer:ovb offset:0 atIndex:0];
-    [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:ocount];
-  }
-
   id<MTLBuffer> dlb = bridge.debugLineBuffer();
   const NSUInteger dlc = bridge.debugLineCount();
   if (dlb && dlc > 0) {
@@ -206,6 +232,25 @@ AppWorldRenderResult AppWorldRenderer::render(MTKView* view, id<MTLCommandQueue>
     [enc setVertexBuffer:dlb offset:0 atIndex:0];
     [enc setVertexBytes:&params length:sizeof(TerrainViewParams) atIndex:1];
     [enc drawPrimitives:MTLPrimitiveTypeLine vertexStart:0 vertexCount:dlc];
+  }
+
+  id<MTLBuffer> ovb = bridge.overlayVertexBuffer();
+  const NSUInteger ocount = bridge.overlayVertexCount();
+  if (ovb && ocount > 0) {
+    [enc setRenderPipelineState:resources.transparentPipeline()];
+    [enc setDepthStencilState:resources.transparentDepthState()];
+    [enc setCullMode:MTLCullModeBack];
+    bindCommonFrameState(fragmentParams);
+    [enc setVertexBuffer:ovb offset:0 atIndex:0];
+    [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:ocount];
+  }
+  if (cameraUnderwater && povb && pocount > 0) {
+    [enc setRenderPipelineState:resources.transparentPipeline()];
+    [enc setDepthStencilState:resources.transparentDepthState()];
+    [enc setCullMode:MTLCullModeBack];
+    bindCommonFrameState(fragmentParams);
+    [enc setVertexBuffer:povb offset:0 atIndex:0];
+    [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:pocount];
   }
 
   [enc endEncoding];

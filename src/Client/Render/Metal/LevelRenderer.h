@@ -18,6 +18,16 @@ class Level;
 
 class LevelRenderer : public LevelListener {
 public:
+  struct DroppedItemVisual {
+    float x = 0.0f;
+    float y = 0.0f;
+    float z = 0.0f;
+    float bob = 0.0f;
+    float yawRadians = 0.0f;
+    int tile = 0;
+    bool underwater = false;
+  };
+
   explicit LevelRenderer(MetalRenderer* metalRenderer);
 
   void setLevel(Level* level);
@@ -33,6 +43,7 @@ public:
   void clearSelectionBlock();
   void spawnMiningParticles(int x, int y, int z, int prevX, int prevY, int prevZ, int tile);
   void spawnBreakParticles(int x, int y, int z, int tile);
+  void setDroppedItems(const std::vector<DroppedItemVisual>& droppedItems);
 
   void tileChanged(int x, int y, int z) override;
   void setTilesDirty(int x0, int y0, int z0, int x1, int y1, int z1, Level* level) override;
@@ -52,6 +63,7 @@ private:
   void appendDestroyOverlay();
   void appendSelectionOverlay();
   void appendBreakParticlesOverlay();
+  void appendDroppedItemsOverlay();
   BreakingParticles::SpawnContext makeBreakParticleSpawnContext(int x, int y, int z, int tile) const;
   void appendOverlayCube(int x, int y, int z, int textureIndex, float inflate);
   void uploadOverlayVertices();
@@ -61,6 +73,7 @@ private:
   MetalRenderer* metalRenderer_;
   Level* level_ = nullptr;
   std::vector<TerrainVertex> overlayVertices_;
+  std::vector<TerrainVertex> preTransparentOverlayVertices_;
   int centerChunkX_ = 0;
   int centerChunkZ_ = 0;
   int renderRadiusChunks_ = 16;
@@ -92,6 +105,7 @@ private:
   int selectionY_ = 0;
   int selectionZ_ = 0;
   BreakingParticles breakParticles_;
+  std::vector<DroppedItemVisual> droppedItems_;
 };
 
 }  // namespace mc

@@ -13,6 +13,7 @@ namespace mc::app {
 namespace {
 
 constexpr double kPlaceRepeatInterval = 0.16;
+constexpr double kDropRepeatInterval = 1.0 / 5.0;
 constexpr double kSprintTapWindowSeconds = 0.28;
 
 enum KeyCode : unsigned short {
@@ -30,10 +31,12 @@ enum KeyCode : unsigned short {
   KeyS = 1,
   KeyD = 2,
   KeyG = 5,
+  KeyH = 4,
   KeyV = 9,
   KeyB = 11,
   KeyQ = 12,
   KeyW = 13,
+  KeyP = 35,
   KeyM = 46,
   KeySpace = 49,
   KeyLeftControl = 59,
@@ -59,6 +62,22 @@ int hotbarIndexForKeyCode(unsigned short keyCode) {
     case Key9: return 8;
     default: return -1;
   }
+}
+
+int consumeRepeats(bool active, double dtSeconds, double intervalSeconds, int maxRepeats, double* accumulator) {
+  if (!accumulator || !active) {
+    if (accumulator) {
+      *accumulator = 0.0;
+    }
+    return 0;
+  }
+  *accumulator += dtSeconds;
+  int repeats = 0;
+  while (*accumulator >= intervalSeconds && repeats < maxRepeats) {
+    *accumulator -= intervalSeconds;
+    ++repeats;
+  }
+  return repeats;
 }
 
 }  // namespace
@@ -183,6 +202,9 @@ bool AppInputState::handleMovementKeyEvent(NSEvent* event, BOOL isPressed, Rende
     }
     if (event.keyCode == KeyQ && !game->isInventoryOpen()) {
       const bool dropStack = ((event.modifierFlags & NSEventModifierFlagControl) != 0);
+      dropKeyHeld_ = YES;
+      dropStackHeld_ = dropStack ? YES : NO;
+      dropRepeatAccumulator_ = 0.0;
       game->dropSelectedHotbarItem(dropStack);
       return true;
     }
@@ -199,6 +221,11 @@ bool AppInputState::handleMovementKeyEvent(NSEvent* event, BOOL isPressed, Rende
   }
 
   switch (event.keyCode) {
+    case KeyQ:
+      if (!isPressed) {
+        clearDropRepeatState();
+      }
+      return true;
     case KeyW:
     case KeyUpArrow:
       moveForward_ = isPressed;
@@ -246,6 +273,11 @@ bool AppInputState::handleMovementKeyEvent(NSEvent* event, BOOL isPressed, Rende
         debugController->toggleChunkBorders();
       }
       return true;
+    case KeyH:
+      if (isPressed && !event.isARepeat && debugController) {
+        debugController->toggleItemHitboxes();
+      }
+      return true;
     case KeyM:
       if (isPressed && !event.isARepeat && debugController) {
         debugController->cycleRenderMode();
@@ -254,6 +286,11 @@ bool AppInputState::handleMovementKeyEvent(NSEvent* event, BOOL isPressed, Rende
     case KeyG:
       if (isPressed && !event.isARepeat && game) {
         game->toggleCreativeMode();
+      }
+      return true;
+    case KeyP:
+      if (isPressed && !event.isARepeat && game) {
+        game->toggleThirdPersonMode();
       }
       return true;
     case KeyV:
@@ -328,6 +365,7 @@ void AppInputState::resetForFocusLoss(Minecraft* game) {
   inventoryLeftDownSlot_ = -1;
   inventoryRightDragVisited_.fill(false);
   placeRepeatAccumulator_ = 0.0;
+  clearDropRepeatState();
   pendingHotbarTooltipTile_ = 0;
   if (game) {
     game->setBreakHeld(false);
@@ -359,24 +397,35 @@ void AppInputState::setInventoryOpen(bool open, Minecraft* game) {
   sprintHeld_ = NO;
   sprintLatched_ = NO;
   placeRepeatAccumulator_ = 0.0;
+  clearDropRepeatState();
   if (game) {
     game->setBreakHeld(false);
   }
 }
 
 void AppInputState::advancePlacement(double dtSeconds, const std::function<void()>& placeAction) {
-  if (!rightMouseHeld_) {
-    placeRepeatAccumulator_ = 0.0;
+  const int repeats = consumeRepeats(rightMouseHeld_ == YES, dtSeconds, kPlaceRepeatInterval, 3, &placeRepeatAccumulator_);
+  for (int i = 0; i < repeats; ++i) {
+    placeAction();
+  }
+}
+
+void AppInputState::advanceItemDrop(double dtSeconds, Minecraft* game) {
+  if (!game) {
+    clearDropRepeatState();
     return;
   }
-
-  placeRepeatAccumulator_ += dtSeconds;
-  int repeats = 0;
-  while (placeRepeatAccumulator_ >= kPlaceRepeatInterval && repeats < 3) {
-    placeRepeatAccumulator_ -= kPlaceRepeatInterval;
-    placeAction();
-    ++repeats;
+  const bool canRepeatDrop = (dropKeyHeld_ == YES) && !game->isInventoryOpen();
+  const int repeats = consumeRepeats(canRepeatDrop, dtSeconds, kDropRepeatInterval, 4, &dropRepeatAccumulator_);
+  for (int i = 0; i < repeats; ++i) {
+    game->dropSelectedHotbarItem(dropStackHeld_ == YES);
   }
+}
+
+void AppInputState::clearDropRepeatState() {
+  dropRepeatAccumulator_ = 0.0;
+  dropKeyHeld_ = NO;
+  dropStackHeld_ = NO;
 }
 
 InputState AppInputState::currentInputState() const {

@@ -27,9 +27,12 @@ public:
   void clearChunkMeshes() override;
   void setChunkDrawList(const std::vector<std::int64_t>& keys) override;
   void setViewParams(const TerrainViewParams& params) override;
+  void setPreTransparentOverlayVertices(const std::vector<TerrainVertex>& vertices) override;
   void setTerrainOverlayVertices(const std::vector<TerrainVertex>& vertices) override;
   void setDebugLineVertices(const std::vector<TerrainVertex>& vertices) override;
 
+  id<MTLBuffer> preTransparentOverlayVertexBuffer() const;
+  NSUInteger preTransparentOverlayVertexCount() const;
   id<MTLBuffer> overlayVertexBuffer() const;
   NSUInteger overlayVertexCount() const;
   id<MTLBuffer> debugLineBuffer() const;
@@ -44,8 +47,10 @@ private:
   id<MTLDevice> device_;
   std::unordered_map<std::int64_t, ChunkGpuMesh> chunkMeshes_;
   std::vector<std::int64_t> drawKeys_;
+  std::vector<TerrainVertex> preTransparentOverlayVertices_;
   std::vector<TerrainVertex> overlayVertices_;
   std::vector<TerrainVertex> debugLineVertices_;
+  id<MTLBuffer> preTransparentOverlayVertexBuffer_ = nil;
   id<MTLBuffer> overlayVertexBuffer_ = nil;
   id<MTLBuffer> debugLineBuffer_ = nil;
   TerrainViewParams params_{};

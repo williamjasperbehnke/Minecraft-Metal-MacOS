@@ -6,6 +6,7 @@ namespace mc {
 
 class Mob : public Entity {
 public:
+  Mob();
   virtual ~Mob() = default;
 
   void tick(Level* level, double dtSeconds) override;
@@ -52,9 +53,6 @@ private:
   float walkingSpeed_ = 0.1f;
   float flyingSpeed_ = 0.02f;
   float stepHeight_ = 0.6f;
-
-  float width_ = 0.6f;
-  float height_ = 1.8f;
 };
 
 }  // namespace mc

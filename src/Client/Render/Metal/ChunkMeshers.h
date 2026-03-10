@@ -205,7 +205,10 @@ private:
           if (waterPass != isWater) {
             continue;
           }
-          if (shouldRenderFaceForTile(tile, view.tileAt(lx, y + 1, lz))) {
+          const int above = view.tileAt(lx, y + 1, lz);
+          const bool renderTop =
+              isWater ? (above != static_cast<int>(TileId::Water)) : shouldRenderFaceForTile(tile, above);
+          if (renderTop) {
             emitFace(transparentOut, worldX, y, worldZ, render::BlockFace::Top, textureForFace(tile, render::BlockFace::Top), 1.0f, tile);
           }
           if (!(tile == static_cast<int>(TileId::Bedrock) && y == Level::minBuildHeight) &&

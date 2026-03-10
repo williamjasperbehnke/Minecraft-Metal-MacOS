@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "World/Level/Level.h"
+#include "World/Phys/AABB.h"
 #include "World/Tile/Tile.h"
 
 namespace mc {
@@ -26,6 +27,10 @@ constexpr float kFlyVerticalDrag = 0.85f;
 constexpr float kFlyMoveDrag = 0.91f;
 
 }  // namespace
+
+Mob::Mob() {
+  setSize(0.6, 1.8);
+}
 
 void Mob::setMoveInput(float xxa, float yya) {
   xxa_ = xxa;
@@ -293,26 +298,29 @@ bool Mob::collidesAt(Level* level, double x, double y, double z) const {
   if (!level) {
     return false;
   }
-
-  const double half = static_cast<double>(width_) * 0.5;
-  const double minX = x - half;
-  const double maxX = x + half;
-  const double minY = y;
-  const double maxY = y + static_cast<double>(height_);
-  const double minZ = z - half;
-  const double maxZ = z + half;
-
-  const int x0 = static_cast<int>(std::floor(minX));
-  const int x1 = static_cast<int>(std::floor(maxX - 1e-6));
-  const int y0 = static_cast<int>(std::floor(minY));
-  const int y1 = static_cast<int>(std::floor(maxY - 1e-6));
-  const int z0 = static_cast<int>(std::floor(minZ));
-  const int z1 = static_cast<int>(std::floor(maxZ - 1e-6));
+  const AABB entityBox = aabbAt(x, y, z);
+  const int x0 = static_cast<int>(std::floor(entityBox.minX));
+  const int x1 = static_cast<int>(std::floor(entityBox.maxX - 1e-6));
+  const int y0 = static_cast<int>(std::floor(entityBox.minY));
+  const int y1 = static_cast<int>(std::floor(entityBox.maxY - 1e-6));
+  const int z0 = static_cast<int>(std::floor(entityBox.minZ));
+  const int z1 = static_cast<int>(std::floor(entityBox.maxZ - 1e-6));
 
   for (int by = y0; by <= y1; ++by) {
     for (int bz = z0; bz <= z1; ++bz) {
       for (int bx = x0; bx <= x1; ++bx) {
-        if (isSolidTileId(level->getTile(bx, by, bz))) {
+        if (!isSolidTileId(level->getTile(bx, by, bz))) {
+          continue;
+        }
+        const AABB tileBox{
+            .minX = static_cast<double>(bx),
+            .minY = static_cast<double>(by),
+            .minZ = static_cast<double>(bz),
+            .maxX = static_cast<double>(bx + 1),
+            .maxY = static_cast<double>(by + 1),
+            .maxZ = static_cast<double>(bz + 1),
+        };
+        if (entityBox.intersects(tileBox)) {
           return true;
         }
       }
@@ -326,26 +334,31 @@ bool Mob::isInWater(Level* level) const {
   if (!level) {
     return false;
   }
-
-  const double half = static_cast<double>(width_) * 0.5;
-  const double minX = x_ - half;
-  const double maxX = x_ + half;
-  const double minY = y_ + 0.05;
-  const double maxY = y_ + static_cast<double>(height_) * 0.9;
-  const double minZ = z_ - half;
-  const double maxZ = z_ + half;
-
-  const int x0 = static_cast<int>(std::floor(minX));
-  const int x1 = static_cast<int>(std::floor(maxX - 1e-6));
-  const int y0 = static_cast<int>(std::floor(minY));
-  const int y1 = static_cast<int>(std::floor(maxY - 1e-6));
-  const int z0 = static_cast<int>(std::floor(minZ));
-  const int z1 = static_cast<int>(std::floor(maxZ - 1e-6));
+  AABB waterProbe = aabb();
+  waterProbe.minY += 0.05;
+  waterProbe.maxY = y_ + hitboxHeight_ * 0.9;
+  const int x0 = static_cast<int>(std::floor(waterProbe.minX));
+  const int x1 = static_cast<int>(std::floor(waterProbe.maxX - 1e-6));
+  const int y0 = static_cast<int>(std::floor(waterProbe.minY));
+  const int y1 = static_cast<int>(std::floor(waterProbe.maxY - 1e-6));
+  const int z0 = static_cast<int>(std::floor(waterProbe.minZ));
+  const int z1 = static_cast<int>(std::floor(waterProbe.maxZ - 1e-6));
 
   for (int by = y0; by <= y1; ++by) {
     for (int bz = z0; bz <= z1; ++bz) {
       for (int bx = x0; bx <= x1; ++bx) {
-        if (level->getTile(bx, by, bz) == static_cast<int>(TileId::Water)) {
+        if (level->getTile(bx, by, bz) != static_cast<int>(TileId::Water)) {
+          continue;
+        }
+        const AABB tileBox{
+            .minX = static_cast<double>(bx),
+            .minY = static_cast<double>(by),
+            .minZ = static_cast<double>(bz),
+            .maxX = static_cast<double>(bx + 1),
+            .maxY = static_cast<double>(by + 1),
+            .maxZ = static_cast<double>(bz + 1),
+        };
+        if (waterProbe.intersects(tileBox)) {
           return true;
         }
       }

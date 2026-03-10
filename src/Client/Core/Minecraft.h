@@ -2,12 +2,17 @@
 
 #include <memory>
 #include <optional>
+#include <random>
+#include <vector>
 
 #include "Client/Core/BlockInteractionController.h"
+#include "Client/Core/Camera.h"
 #include "Client/Core/InputState.h"
 #include "Client/Core/PlayerController.h"
 #include "Client/GameMode/GameMode.h"
 #include "Client/Render/Metal/MetalRenderer.h"
+#include "World/Entity/ItemEntitySystem.h"
+#include "World/Phys/AABB.h"
 
 namespace mc {
 
@@ -36,6 +41,8 @@ public:
   void setBreakHeld(bool held);
   void setViewAspect(float aspect);
   void toggleInventory();
+  void toggleThirdPersonMode();
+  bool isThirdPersonMode() const { return camera_.isThirdPerson(); }
   void setInventoryOpen(bool open);
   bool isInventoryOpen() const;
   void selectHotbarSlot(int slotIndex);
@@ -67,14 +74,23 @@ public:
   float lookYawDegrees() const;
   float lookPitchDegrees() const;
   bool isCameraUnderwater() const;
+  const std::vector<ItemEntity>& droppedItems() const { return itemEntitySystem_.items(); }
+  bool playerHitbox(AABB* out) const;
 
   Level* level() const { return level_.get(); }
 
 private:
   bool destroyBlockAt(int x, int y, int z);
   bool placeBlockAt(int x, int y, int z);
+  void updateDroppedItems(double dtSeconds);
+  void spawnDroppedItem(int tile, int count, const simd_float3& position, const simd_float3& velocity, int throwTimeTicks);
+  void spawnBlockDrop(int x, int y, int z, int tile);
+  void spawnPlayerDrop(int tile, int count);
+  void spawnInventoryDrop(int tile, int count);
+  float randomFloat(float minValue, float maxValue);
 
   simd_float3 cameraPosition() const;
+  simd_float3 renderCameraPosition() const;
   simd_float3 forwardVector() const;
   simd_float3 rightVector() const;
   simd_float3 upVector() const;
@@ -101,9 +117,11 @@ private:
 
   float viewAspect_ = 16.0f / 9.0f;
   float currentFovRadians_ = 70.0f * 3.1415926535f / 180.0f;
+  Camera camera_{};
 
-  static constexpr float kEyeHeight = 1.62f;
-  static constexpr float kCrouchEyeOffset = 0.25f;
+  ItemEntitySystem itemEntitySystem_{};
+  std::mt19937 rng_{0xA11CEu};
+
   static constexpr int kRenderDistanceChunks = 16;
 };
 

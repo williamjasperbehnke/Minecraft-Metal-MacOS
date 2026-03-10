@@ -44,6 +44,8 @@ private:
     float underwater = 0.0f;
   };
 
+  static void appendWireAabb(std::vector<TerrainVertex>& out, float minX, float minY, float minZ, float maxX, float maxY, float maxZ,
+                             simd_float3 color);
   static void appendSelectionWireCube(std::vector<TerrainVertex>& out, int x, int y, int z);
 
   double transparentSortAccum_ = 0.0;

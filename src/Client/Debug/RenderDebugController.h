@@ -11,13 +11,16 @@ public:
   };
 
   void toggleChunkBorders();
+  void toggleItemHitboxes();
   void cycleRenderMode();
 
   bool showChunkBorders() const { return showChunkBorders_; }
+  bool showItemHitboxes() const { return showItemHitboxes_; }
   RenderMode renderMode() const { return renderMode_; }
 
 private:
   bool showChunkBorders_ = false;
+  bool showItemHitboxes_ = false;
   RenderMode renderMode_ = RenderMode::Textured;
 };
 
