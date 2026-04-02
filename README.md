@@ -8,11 +8,10 @@ A macOS + Metal voxel game project with a modular C++/Objective-C++ architecture
 
 ![Forest biome](docs/screenshots/forest_biome.png)
 ![Cave](docs/screenshots/cave.png)
-![Flat view](docs/screenshots/flat_view.png)
+![Flight mode](docs/screenshots/flight_mode.png)
 
 ### Player and UI
 
-![Flight mode](docs/screenshots/flight_mode.png)
 ![Inventory](docs/screenshots/inventory.png)
 ![Items](docs/screenshots/items.png)
 
@@ -20,6 +19,7 @@ A macOS + Metal voxel game project with a modular C++/Objective-C++ architecture
 
 ![Third-person debug overlay](docs/screenshots/thrid_person_debug_overlay.png)
 ![Wireframe view](docs/screenshots/wireframe_view.png)
+![Flat view](docs/screenshots/flat_view.png)
 
 ## Build
 
